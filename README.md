@@ -2,7 +2,7 @@
 
 Prometheus exporter for SONiC network switches.
 
-This project collects switch telemetry from SONiC Redis databases and exposes it in Prometheus format. It also enables a curated subset of `node_exporter` host metrics, so you can monitor switch services and system health in one scrape target.
+This project collects switch telemetry from SONiC Redis databases and exposes it in Prometheus format. It also enables a curated subset of `node_exporter` host metrics, and can optionally expose FRRouting metrics through the upstream `frr_exporter` library, so you can monitor switch services and system health in one scrape target.
 
 ## Why exporters matter
 
@@ -38,7 +38,7 @@ flowchart LR
 
     subgraph sonic-exporter
         M[cmd/sonic-exporter/main.go]
-        COL[Collectors\ninterface, hw, crm, queue, lldp, vlan, lag, fdb\nsystem*, docker*]
+        COL[Collectors\ninterface, hw, crm, queue, lldp, vlan, lag, fdb\nsystem*, docker*, frr*]
         CACHE[(In-memory metric cache)]
         NODE[node_exporter subset\nloadavg,cpu,diskstats,filesystem,meminfo,time,stat]
     end
@@ -84,6 +84,7 @@ For a deeper breakdown, see `docs/architecture.md`.
 | FDB | FDB summary from ASIC DB | Disabled (`FDB_ENABLED=false`) |
 | System (experimental) | Switch identity, software metadata, uptime | Disabled (`SYSTEM_ENABLED=false`) |
 | Docker (experimental) | Container runtime metrics from `STATE_DB` | Disabled (`DOCKER_ENABLED=false`) |
+| FRR | FRRouting metrics via upstream `frr_exporter` | Disabled (`FRR_ENABLED=false`) |
 
 Collector implementations live in `internal/collector/*_collector.go`.
 
@@ -213,6 +214,54 @@ Docker collector behavior:
 - No writes.
 - Controlled label cardinality (`container` only).
 
+### FRR collector
+
+| Variable | Description | Default |
+|---|---|---|
+| `FRR_ENABLED` | Enable FRR collector wrapper | `false` |
+| `FRR_SOCKET_DIR_PATH` | FRR Unix socket directory | `/var/run/frr` |
+| `FRR_SOCKET_TIMEOUT` | Timeout for FRR socket access | `20s` |
+| `FRR_VTYSH_ENABLED` | Use `vtysh` instead of Unix sockets | `false` |
+| `FRR_VTYSH_PATH` | Path to `vtysh` | `/usr/bin/vtysh` |
+| `FRR_VTYSH_TIMEOUT` | Timeout for `vtysh` commands | `20s` |
+| `FRR_VTYSH_SUDO` | Run `vtysh` through `sudo` | `false` |
+| `FRR_VTYSH_OPTIONS` | Extra options passed to `vtysh` | empty |
+| `FRR_BGP_ENABLED` | Enable upstream `bgp` collector | `true` |
+| `FRR_BGP6_ENABLED` | Enable upstream `bgp6` collector | `false` |
+| `FRR_BGPL2VPN_ENABLED` | Enable upstream `bgpl2vpn` collector | `false` |
+| `FRR_OSPF_ENABLED` | Enable upstream `ospf` collector | `true` |
+| `FRR_OSPF_INSTANCES` | Comma-separated OSPF instance IDs | empty |
+| `FRR_BFD_ENABLED` | Enable upstream `bfd` collector | `true` |
+| `FRR_ROUTE_ENABLED` | Enable upstream `route` collector | `true` |
+| `FRR_ROUTE_DETAILED_ENABLED` | Enable detailed route metrics | `false` |
+| `FRR_RPKI_ENABLED` | Enable upstream `rpki` collector | `false` |
+| `FRR_VRRP_ENABLED` | Enable upstream `vrrp` collector | `false` |
+| `FRR_PIM_ENABLED` | Enable upstream `pim` collector | `false` |
+| `FRR_STATUS_ENABLED` | Enable upstream `status` collector | `true` |
+| `FRR_BGP_PEER_TYPES_ENABLED` | Enable peer-type aggregate metric | `false` |
+| `FRR_BGP_PEER_TYPES_KEYS` | Comma-separated BGP peer-type keys | `type` |
+| `FRR_BGP_PEER_DESCRIPTIONS_ENABLED` | Add structured peer descriptions as labels | `false` |
+| `FRR_BGP_PEER_DESCRIPTIONS_PLAIN_TEXT` | Use plain-text peer descriptions | `false` |
+| `FRR_BGP_PEER_GROUPS_ENABLED` | Add peer group labels | `false` |
+| `FRR_BGP_PEER_HOSTNAMES_ENABLED` | Add peer hostname labels | `false` |
+| `FRR_BGP_ADVERTISED_PREFIXES_ENABLED` | Query advertised prefix counts for older FRR | `false` |
+| `FRR_BGP_ACCEPTED_FILTERED_PREFIXES_ENABLED` | Export accepted and filtered BGP prefix counts | `false` |
+| `FRR_BGP_NEXT_HOP_INTERFACE_ENABLED` | Add next-hop interface label | `false` |
+| `FRR_BGP_MONITORED_PREFIXES_FILE` | Prefix file for per-peer presence monitoring | empty |
+
+Enable:
+
+```bash
+FRR_ENABLED=true ./sonic-exporter
+```
+
+FRR collector behavior:
+
+- Delegates to the upstream `github.com/tynany/frr_exporter` collectors and keeps upstream metric names under the `frr_` namespace.
+- Uses current upstream defaults when enabled: `bgp`, `ospf`, `bfd`, `route`, and `status` are on by default; `bgp6`, `bgpl2vpn`, `rpki`, `vrrp`, and `pim` stay opt-in.
+- Uses Unix sockets by default and supports `vtysh`, but upstream also recommends leaving `vtysh` disabled unless you need it.
+- `RPKI` requires FRR built with `--enable-rpki` upstream.
+
 ## Metrics examples
 
 These are compact anonymized examples. Labels can vary by SONiC platform/version.
@@ -228,6 +277,7 @@ sonic_lag_oper_status{lag="PortChannel1"} 1
 sonic_fdb_entries 1331
 sonic_system_uptime_seconds 123456
 sonic_docker_container_cpu_percent{container="swss"} 1.5
+frr_collector_up{collector="bgp"} 1
 node_memory_MemAvailable_bytes 1.24e+10
 ```
 
@@ -242,6 +292,10 @@ These tests were done with SONiC Community releases (not SONiC Enterprise releas
 | MSN2100-CB2FC | 202411 | 12 | Debian 12.12 | 6.1.0-29-2-amd64 | x86_64-mlnx_msn2100-r0 | mellanox |
 
 ## Development
+
+Requirements:
+
+- Go 1.25 or newer
 
 ```bash
 go test ./...
@@ -293,6 +347,7 @@ LAG_ENABLED=true
 FDB_ENABLED=false
 SYSTEM_ENABLED=false
 DOCKER_ENABLED=false
+FRR_ENABLED=false
 EOF
 ```
 
@@ -364,6 +419,7 @@ To confirm a specific collector is enabled/disabled, look for its metric prefix:
 - FDB: `sonic_fdb_`
 - System: `sonic_system_`
 - Docker: `sonic_docker_`
+- FRR: `frr_`
 
 ### 7) Change collector settings safely
 
