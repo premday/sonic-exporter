@@ -29,7 +29,7 @@ flowchart TD
 - Core collectors are always registered:
   - `NewInterfaceCollector`, `NewHwCollector`, `NewCrmCollector`, `NewQueueCollector`.
 - Optional collectors are gated by `IsEnabled()` before registration:
-  - `NewLldpCollector`, `NewVlanCollector`, `NewLagCollector`, `NewFdbCollector`, `NewSystemCollector`, `NewDockerCollector`.
+  - `NewLldpCollector`, `NewVlanCollector`, `NewLagCollector`, `NewFdbCollector`, `NewSystemCollector`, `NewDockerCollector`, `NewFrrCollector`.
 - The binary also registers a curated `node_exporter` subset (`loadavg`, `cpu`, `diskstats`, `filesystem`, `meminfo`, `time`, `stat`).
 
 ## Collector execution models
@@ -40,6 +40,7 @@ This repo currently uses two cache patterns.
 |---|---|---|---|
 | Scrape-time cache | `interface`, `hw`, `crm`, `queue` | Refresh inside `Collect` when older than 15s | `sync.Mutex` |
 | Background refresh loop | `lldp`, `vlan`, `lag`, `fdb`, `system`, `docker` | `refreshLoop` ticker + `refreshMetrics` | `sync.RWMutex` |
+| Delegated upstream exporter | `frr` | Upstream exporter collects at scrape time | Upstream-managed |
 
 ### Model A: scrape-time cache (15s window)
 
@@ -64,6 +65,19 @@ Flow:
 
 This model also reports cache freshness (`cache_age_seconds`) every scrape.
 
+### Model C: delegated upstream exporter
+
+Files: `internal/collector/frr_collector.go` plus upstream `github.com/tynany/frr_exporter`.
+
+Flow:
+
+1. Constructor loads env-driven config and early-returns if disabled.
+2. Constructor maps env settings into upstream `frr_exporter` flags.
+3. Constructor creates the upstream exporter once.
+4. `Collect` and `Describe` delegate directly to the upstream exporter.
+
+Use this model when the project intentionally reuses a mature upstream collector instead of duplicating protocol-specific scraping logic locally.
+
 ## Caching and concurrency details
 
 - Scrape-time collectors use `sync.Mutex` and cache arrays built per scrape.
@@ -83,6 +97,10 @@ This model also reports cache freshness (`cache_age_seconds`) every scrape.
 - Docker collector (`internal/collector/docker_collector.go`):
   - Reads `STATE_DB` `DOCKER_STATS|*` and `DOCKER_STATS|LastUpdateTime`.
   - Tracks source age and stale state (`source_age_seconds`, `source_stale`).
+- FRR collector (`internal/collector/frr_collector.go`):
+  - Wraps upstream `frr_exporter` collectors.
+  - Uses FRR Unix sockets by default and can optionally use `vtysh`.
+  - Keeps upstream `frr_*` metric names and collector-specific behavior.
 
 ## Cardinality and scale protections
 
