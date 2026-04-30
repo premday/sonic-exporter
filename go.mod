@@ -8,7 +8,7 @@ require (
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.67.5
-	github.com/prometheus/exporter-toolkit v0.15.1
+	github.com/prometheus/exporter-toolkit v0.16.0
 	github.com/prometheus/node_exporter v1.10.2
 	github.com/redis/go-redis/v9 v9.6.1
 	github.com/tynany/frr_exporter v1.11.0
@@ -36,6 +36,7 @@ require (
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/jpillora/backoff v1.0.0 // indirect
 	github.com/jsimonetti/rtnetlink/v2 v2.0.5 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lufia/iostat v1.2.1 // indirect
 	github.com/mattn/go-xmlrpc v0.0.3 // indirect
@@ -58,15 +59,15 @@ require (
 	github.com/yuin/gopher-lua v1.1.0 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
-	go.yaml.in/yaml/v2 v2.4.3 // indirect
-	golang.org/x/crypto v0.47.0 // indirect
+	go.yaml.in/yaml/v2 v2.4.4 // indirect
+	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/exp v0.0.0-20250911091902-df9299821621 // indirect
-	golang.org/x/net v0.49.0 // indirect
+	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
-	golang.org/x/time v0.14.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	howett.net/plist v1.0.1 // indirect
