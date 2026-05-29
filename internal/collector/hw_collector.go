@@ -31,10 +31,28 @@ type hwCollector struct {
 	cachedMetrics             []prometheus.Metric
 	lastScrapeTime            time.Time
 	logger                    *slog.Logger
+	metricFilter              MetricFilter
 	mu                        sync.Mutex
 }
 
-func NewHwCollector(logger *slog.Logger) *hwCollector {
+const (
+	hwPsuInfoMetricName                 = "sonic_hw_psu_info"
+	hwPsuInputVoltageVoltsMetricName    = "sonic_hw_psu_input_voltage_volts"
+	hwPsuInputCurrentAmperesMetricName  = "sonic_hw_psu_input_current_amperes"
+	hwPsuOutputVoltageVoltsMetricName   = "sonic_hw_psu_output_voltage_volts"
+	hwPsuOutputCurrentAmperesMetricName = "sonic_hw_psu_output_current_amperes"
+	hwPsuOperationalStatusMetricName    = "sonic_hw_psu_operational_status"
+	hwPsuAvailableStatusMetricName      = "sonic_hw_psu_available_status"
+	hwPsuTemperatureCelsiusMetricName   = "sonic_hw_psu_temperature_celsius"
+	hwFanRpmMetricName                  = "sonic_hw_fan_rpm"
+	hwFanOperationalStatusMetricName    = "sonic_hw_fan_operational_status"
+	hwFanAvailableStatusMetricName      = "sonic_hw_fan_available_status"
+	hwChassisInfoMetricName             = "sonic_hw_chassis_info"
+	hwScrapeDurationMetricName          = "sonic_hw_scrape_duration_seconds"
+	hwCollectorSuccessMetricName        = "sonic_hw_collector_success"
+)
+
+func NewHwCollector(logger *slog.Logger, metricFilter MetricFilter) *hwCollector {
 	const (
 		namespace = "sonic"
 		subsystem = "hw"
@@ -69,7 +87,8 @@ func NewHwCollector(logger *slog.Logger) *hwCollector {
 			"Time it took for prometheus to scrape sonic hw metrics", nil, nil),
 		scrapeCollectorSuccess: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "collector_success"),
 			"Whether hw collector succeeded", nil, nil),
-		logger: logger,
+		logger:       logger,
+		metricFilter: metricFilter,
 	}
 }
 
@@ -115,9 +134,11 @@ func (collector *hwCollector) Collect(ch chan<- prometheus.Metric) {
 		scrapeSuccess = 0
 		collector.logger.Error("Error scraping metrics", "error", err)
 	}
-	collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-		collector.scrapeCollectorSuccess, prometheus.GaugeValue, scrapeSuccess,
-	))
+	if collector.metricFilter.Enabled(hwCollectorSuccessMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			collector.scrapeCollectorSuccess, prometheus.GaugeValue, scrapeSuccess,
+		))
+	}
 
 	for _, cachedMetric := range collector.cachedMetrics {
 		ch <- cachedMetric
@@ -156,9 +177,11 @@ func (collector *hwCollector) scrapeMetrics(ctx context.Context) error {
 	collector.logger.Info("Ending hw metric scrape")
 
 	collector.lastScrapeTime = time.Now()
-	collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-		collector.scrapeDuration, prometheus.GaugeValue, time.Since(scrapeTime).Seconds(),
-	))
+	if collector.metricFilter.Enabled(hwScrapeDurationMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			collector.scrapeDuration, prometheus.GaugeValue, time.Since(scrapeTime).Seconds(),
+		))
+	}
 	return nil
 }
 
@@ -184,58 +207,74 @@ func (collector *hwCollector) collectPsuInfo(ctx context.Context, redisClient re
 		modelName := data["name"]
 		model := data["model"]
 
-		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-			collector.hwPsuInfo, prometheus.GaugeValue, 1, psuId, serial, modelName, model,
-		))
+		if collector.metricFilter.Enabled(hwPsuInfoMetricName) {
+			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+				collector.hwPsuInfo, prometheus.GaugeValue, 1, psuId, serial, modelName, model,
+			))
+		}
 
 		if strings.ToLower(data["status"]) == "true" {
 			operational_status = 1.0
 		}
-		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-			collector.hwPsuOperationalStatus, prometheus.GaugeValue, operational_status, psuId,
-		))
+		if collector.metricFilter.Enabled(hwPsuOperationalStatusMetricName) {
+			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+				collector.hwPsuOperationalStatus, prometheus.GaugeValue, operational_status, psuId,
+			))
+		}
 
 		if strings.ToLower(data["presence"]) == "true" {
 			available_status = 1.0
 		}
-		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-			collector.hwPsuAvailableStatus, prometheus.GaugeValue, available_status, psuId,
-		))
+		if collector.metricFilter.Enabled(hwPsuAvailableStatusMetricName) {
+			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+				collector.hwPsuAvailableStatus, prometheus.GaugeValue, available_status, psuId,
+			))
+		}
 
 		// voltage, amperage and temperature metrics are appended only if values can be parsed
 		inVolts, err := parseFloat(data["input_voltage"])
 		if err == nil {
-			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-				collector.hwPsuInputVoltageVolts, prometheus.GaugeValue, inVolts, psuId,
-			))
+			if collector.metricFilter.Enabled(hwPsuInputVoltageVoltsMetricName) {
+				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+					collector.hwPsuInputVoltageVolts, prometheus.GaugeValue, inVolts, psuId,
+				))
+			}
 		}
 
 		inAmperes, err := parseFloat(data["input_current"])
 		if err == nil {
-			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-				collector.hwPsuInputCurrentAmperes, prometheus.GaugeValue, inAmperes, psuId,
-			))
+			if collector.metricFilter.Enabled(hwPsuInputCurrentAmperesMetricName) {
+				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+					collector.hwPsuInputCurrentAmperes, prometheus.GaugeValue, inAmperes, psuId,
+				))
+			}
 		}
 
 		outVolts, err := parseFloat(data["output_voltage"])
 		if err == nil {
-			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-				collector.hwPsuOutputVoltageVolts, prometheus.GaugeValue, outVolts, psuId,
-			))
+			if collector.metricFilter.Enabled(hwPsuOutputVoltageVoltsMetricName) {
+				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+					collector.hwPsuOutputVoltageVolts, prometheus.GaugeValue, outVolts, psuId,
+				))
+			}
 		}
 
 		outAmperes, err := parseFloat(data["output_current"])
 		if err == nil {
-			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-				collector.hwPsuOutputCurrentAmperes, prometheus.GaugeValue, outAmperes, psuId,
-			))
+			if collector.metricFilter.Enabled(hwPsuOutputCurrentAmperesMetricName) {
+				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+					collector.hwPsuOutputCurrentAmperes, prometheus.GaugeValue, outAmperes, psuId,
+				))
+			}
 		}
 
 		temp, err := parseFloat(data["temp"])
 		if err == nil {
-			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-				collector.hwPsuTemperatureCelsius, prometheus.GaugeValue, temp, psuId,
-			))
+			if collector.metricFilter.Enabled(hwPsuTemperatureCelsiusMetricName) {
+				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+					collector.hwPsuTemperatureCelsius, prometheus.GaugeValue, temp, psuId,
+				))
+			}
 		}
 	}
 
@@ -279,22 +318,28 @@ func (collector *hwCollector) collectFanInfo(ctx context.Context, redisClient re
 		if strings.ToLower(data["status"]) == "true" {
 			operational_status = 1.0
 		}
-		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-			collector.hwFanOperationalStatus, prometheus.GaugeValue, operational_status, fanName, fanSlot,
-		))
+		if collector.metricFilter.Enabled(hwFanOperationalStatusMetricName) {
+			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+				collector.hwFanOperationalStatus, prometheus.GaugeValue, operational_status, fanName, fanSlot,
+			))
+		}
 
 		if strings.ToLower(data["presence"]) == "true" {
 			available_status = 1.0
 		}
-		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-			collector.hwFanAvailableStatus, prometheus.GaugeValue, available_status, fanName, fanSlot,
-		))
+		if collector.metricFilter.Enabled(hwFanAvailableStatusMetricName) {
+			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+				collector.hwFanAvailableStatus, prometheus.GaugeValue, available_status, fanName, fanSlot,
+			))
+		}
 
 		fanRpm, err := parseFloat(data["speed"])
 		if err == nil {
-			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-				collector.hwFanRpm, prometheus.GaugeValue, fanRpm, fanName, fanSlot,
-			))
+			if collector.metricFilter.Enabled(hwFanRpmMetricName) {
+				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+					collector.hwFanRpm, prometheus.GaugeValue, fanRpm, fanName, fanSlot,
+				))
+			}
 		}
 	}
 
@@ -321,9 +366,11 @@ func (collector *hwCollector) collectChassisInfo(ctx context.Context, redisClien
 		serial := data["serial"]
 		model := data["model"]
 
-		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-			collector.hwChassisInfo, prometheus.GaugeValue, 1, chassisId, psuNum, serial, model,
-		))
+		if collector.metricFilter.Enabled(hwChassisInfoMetricName) {
+			collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+				collector.hwChassisInfo, prometheus.GaugeValue, 1, chassisId, psuNum, serial, model,
+			))
+		}
 	}
 
 	return nil

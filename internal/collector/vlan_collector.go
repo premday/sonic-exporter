@@ -33,8 +33,9 @@ type vlanCollector struct {
 	cacheAge               *prometheus.Desc
 	skippedEntries         *prometheus.Desc
 
-	logger *slog.Logger
-	config vlanCollectorConfig
+	logger       *slog.Logger
+	metricFilter MetricFilter
+	config       vlanCollectorConfig
 
 	mu                 sync.RWMutex
 	cachedMetrics      []prometheus.Metric
@@ -49,7 +50,7 @@ type vlanMemberEntry struct {
 	taggingMode string
 }
 
-func NewVlanCollector(logger *slog.Logger) *vlanCollector {
+func NewVlanCollector(logger *slog.Logger, metricFilter MetricFilter) *vlanCollector {
 	const (
 		namespace = "sonic"
 		subsystem = "vlan"
@@ -74,8 +75,9 @@ func NewVlanCollector(logger *slog.Logger) *vlanCollector {
 			"Age of latest VLAN cache refresh", nil, nil),
 		skippedEntries: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "entries_skipped"),
 			"Number of VLAN entries skipped during latest refresh", nil, nil),
-		logger: logger,
-		config: loadVlanCollectorConfig(logger),
+		logger:       logger,
+		metricFilter: metricFilter,
+		config:       loadVlanCollectorConfig(logger),
 	}
 
 	if !collector.config.enabled {
@@ -127,10 +129,18 @@ func (collector *vlanCollector) Collect(ch chan<- prometheus.Metric) {
 		cacheAge = time.Since(lastRefreshTime).Seconds()
 	}
 
-	ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
-	ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
-	ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
-	ch <- prometheus.MustNewConstMetric(collector.skippedEntries, prometheus.GaugeValue, lastSkippedEntries)
+	if collector.metricFilter.Enabled("sonic_vlan_scrape_duration_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
+	}
+	if collector.metricFilter.Enabled("sonic_vlan_collector_success") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
+	}
+	if collector.metricFilter.Enabled("sonic_vlan_cache_age_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
+	}
+	if collector.metricFilter.Enabled("sonic_vlan_entries_skipped") {
+		ch <- prometheus.MustNewConstMetric(collector.skippedEntries, prometheus.GaugeValue, lastSkippedEntries)
+	}
 }
 
 func (collector *vlanCollector) refreshLoop() {
@@ -260,13 +270,15 @@ func (collector *vlanCollector) scrapeMetrics(ctx context.Context) ([]prometheus
 		}
 
 		vlanID := firstNonEmpty(configData["vlanid"], strings.TrimPrefix(vlanName, "Vlan"))
-		metrics = append(metrics, prometheus.MustNewConstMetric(collector.vlanInfo, prometheus.GaugeValue, 1, vlanName, vlanID))
+		if collector.metricFilter.Enabled("sonic_vlan_info") {
+			metrics = append(metrics, prometheus.MustNewConstMetric(collector.vlanInfo, prometheus.GaugeValue, 1, vlanName, vlanID))
+		}
 
-		if adminStatus := firstNonEmpty(applData["admin_status"], configData["admin_status"]); adminStatus != "" {
+		if adminStatus := firstNonEmpty(applData["admin_status"], configData["admin_status"]); adminStatus != "" && collector.metricFilter.Enabled("sonic_vlan_admin_status") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.vlanAdminStatus, prometheus.GaugeValue, statusToGauge(adminStatus), vlanName))
 		}
 
-		if operStatus := applData["oper_status"]; operStatus != "" {
+		if operStatus := applData["oper_status"]; operStatus != "" && collector.metricFilter.Enabled("sonic_vlan_oper_status") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.vlanOperStatus, prometheus.GaugeValue, statusToGauge(operStatus), vlanName))
 		}
 
@@ -282,20 +294,24 @@ func (collector *vlanCollector) scrapeMetrics(ctx context.Context) ([]prometheus
 				continue
 			}
 
-			metrics = append(metrics, prometheus.MustNewConstMetric(
-				collector.vlanMemberInfo,
-				prometheus.GaugeValue,
-				1,
-				vlanName,
-				member.name,
-				member.taggingMode,
-			))
+			if collector.metricFilter.Enabled("sonic_vlan_member_info") {
+				metrics = append(metrics, prometheus.MustNewConstMetric(
+					collector.vlanMemberInfo,
+					prometheus.GaugeValue,
+					1,
+					vlanName,
+					member.name,
+					member.taggingMode,
+				))
+			}
 
 			processedMembers++
 			memberCount++
 		}
 
-		metrics = append(metrics, prometheus.MustNewConstMetric(collector.vlanMembers, prometheus.GaugeValue, float64(memberCount), vlanName))
+		if collector.metricFilter.Enabled("sonic_vlan_members") {
+			metrics = append(metrics, prometheus.MustNewConstMetric(collector.vlanMembers, prometheus.GaugeValue, float64(memberCount), vlanName))
+		}
 		processedVlans++
 	}
 
