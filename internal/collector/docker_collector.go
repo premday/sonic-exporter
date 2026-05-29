@@ -43,8 +43,9 @@ type dockerCollector struct {
 	scrapeCollectorSuccess *prometheus.Desc
 	cacheAge               *prometheus.Desc
 
-	logger *slog.Logger
-	config dockerCollectorConfig
+	logger       *slog.Logger
+	metricFilter MetricFilter
+	config       dockerCollectorConfig
 
 	mu                   sync.RWMutex
 	cachedMetrics        []prometheus.Metric
@@ -57,7 +58,7 @@ type dockerCollector struct {
 	lastContainerCount   float64
 }
 
-func NewDockerCollector(logger *slog.Logger) *dockerCollector {
+func NewDockerCollector(logger *slog.Logger, metricFilter MetricFilter) *dockerCollector {
 	const (
 		namespace = "sonic"
 		subsystem = "docker"
@@ -100,8 +101,9 @@ func NewDockerCollector(logger *slog.Logger) *dockerCollector {
 			"Whether docker collector succeeded", nil, nil),
 		cacheAge: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "cache_age_seconds"),
 			"Age of latest docker cache refresh", nil, nil),
-		logger: logger,
-		config: loadDockerCollectorConfig(logger),
+		logger:       logger,
+		metricFilter: metricFilter,
+		config:       loadDockerCollectorConfig(logger),
 	}
 
 	if !collector.config.enabled {
@@ -175,14 +177,30 @@ func (collector *dockerCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 	}
 
-	ch <- prometheus.MustNewConstMetric(collector.containerCount, prometheus.GaugeValue, lastContainerCount)
-	ch <- prometheus.MustNewConstMetric(collector.sourceLastUpdate, prometheus.GaugeValue, sourceTimestamp)
-	ch <- prometheus.MustNewConstMetric(collector.sourceAge, prometheus.GaugeValue, sourceAge)
-	ch <- prometheus.MustNewConstMetric(collector.sourceStale, prometheus.GaugeValue, lastSourceStale)
-	ch <- prometheus.MustNewConstMetric(collector.entriesSkipped, prometheus.GaugeValue, lastEntriesSkipped)
-	ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
-	ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
-	ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
+	if collector.metricFilter.Enabled("sonic_docker_containers") {
+		ch <- prometheus.MustNewConstMetric(collector.containerCount, prometheus.GaugeValue, lastContainerCount)
+	}
+	if collector.metricFilter.Enabled("sonic_docker_source_last_update_timestamp_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.sourceLastUpdate, prometheus.GaugeValue, sourceTimestamp)
+	}
+	if collector.metricFilter.Enabled("sonic_docker_source_age_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.sourceAge, prometheus.GaugeValue, sourceAge)
+	}
+	if collector.metricFilter.Enabled("sonic_docker_source_stale") {
+		ch <- prometheus.MustNewConstMetric(collector.sourceStale, prometheus.GaugeValue, lastSourceStale)
+	}
+	if collector.metricFilter.Enabled("sonic_docker_entries_skipped") {
+		ch <- prometheus.MustNewConstMetric(collector.entriesSkipped, prometheus.GaugeValue, lastEntriesSkipped)
+	}
+	if collector.metricFilter.Enabled("sonic_docker_scrape_duration_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
+	}
+	if collector.metricFilter.Enabled("sonic_docker_collector_success") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
+	}
+	if collector.metricFilter.Enabled("sonic_docker_cache_age_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
+	}
 }
 
 func (collector *dockerCollector) refreshLoop() {
@@ -272,60 +290,62 @@ func (collector *dockerCollector) scrapeMetrics(ctx context.Context) ([]promethe
 			continue
 		}
 
-		metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerInfo, prometheus.GaugeValue, 1, containerName))
+		if collector.metricFilter.Enabled("sonic_docker_container_info") {
+			metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerInfo, prometheus.GaugeValue, 1, containerName))
+		}
 
-		if cpuPercent, ok := parseDockerFloat(containerStats, "CPU%"); ok {
+		if cpuPercent, ok := parseDockerFloat(containerStats, "CPU%"); !ok {
+			skippedEntries++
+		} else if collector.metricFilter.Enabled("sonic_docker_container_cpu_percent") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerCPUPercent, prometheus.GaugeValue, cpuPercent, containerName))
-		} else {
-			skippedEntries++
 		}
 
-		if memoryBytes, ok := parseDockerFloat(containerStats, "MEM_BYTES"); ok {
+		if memoryBytes, ok := parseDockerFloat(containerStats, "MEM_BYTES"); !ok {
+			skippedEntries++
+		} else if collector.metricFilter.Enabled("sonic_docker_container_memory_usage_bytes") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerMemoryBytes, prometheus.GaugeValue, memoryBytes, containerName))
-		} else {
-			skippedEntries++
 		}
 
-		if memoryLimit, ok := parseDockerFloat(containerStats, "MEM_LIMIT_BYTES"); ok {
+		if memoryLimit, ok := parseDockerFloat(containerStats, "MEM_LIMIT_BYTES"); !ok {
+			skippedEntries++
+		} else if collector.metricFilter.Enabled("sonic_docker_container_memory_limit_bytes") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerMemoryLimit, prometheus.GaugeValue, memoryLimit, containerName))
-		} else {
-			skippedEntries++
 		}
 
-		if memoryPercent, ok := parseDockerFloat(containerStats, "MEM%"); ok {
+		if memoryPercent, ok := parseDockerFloat(containerStats, "MEM%"); !ok {
+			skippedEntries++
+		} else if collector.metricFilter.Enabled("sonic_docker_container_memory_percent") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerMemoryPercent, prometheus.GaugeValue, memoryPercent, containerName))
-		} else {
-			skippedEntries++
 		}
 
-		if netIn, ok := parseDockerFloat(containerStats, "NET_IN_BYTES"); ok {
+		if netIn, ok := parseDockerFloat(containerStats, "NET_IN_BYTES"); !ok {
+			skippedEntries++
+		} else if collector.metricFilter.Enabled("sonic_docker_container_network_receive_bytes_total") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerNetworkRx, prometheus.CounterValue, netIn, containerName))
-		} else {
-			skippedEntries++
 		}
 
-		if netOut, ok := parseDockerFloat(containerStats, "NET_OUT_BYTES"); ok {
+		if netOut, ok := parseDockerFloat(containerStats, "NET_OUT_BYTES"); !ok {
+			skippedEntries++
+		} else if collector.metricFilter.Enabled("sonic_docker_container_network_transmit_bytes_total") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerNetworkTx, prometheus.CounterValue, netOut, containerName))
-		} else {
-			skippedEntries++
 		}
 
-		if blockIn, ok := parseDockerFloat(containerStats, "BLOCK_IN_BYTES"); ok {
+		if blockIn, ok := parseDockerFloat(containerStats, "BLOCK_IN_BYTES"); !ok {
+			skippedEntries++
+		} else if collector.metricFilter.Enabled("sonic_docker_container_block_read_bytes_total") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerBlockRead, prometheus.CounterValue, blockIn, containerName))
-		} else {
-			skippedEntries++
 		}
 
-		if blockOut, ok := parseDockerFloat(containerStats, "BLOCK_OUT_BYTES"); ok {
+		if blockOut, ok := parseDockerFloat(containerStats, "BLOCK_OUT_BYTES"); !ok {
+			skippedEntries++
+		} else if collector.metricFilter.Enabled("sonic_docker_container_block_write_bytes_total") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerBlockWrite, prometheus.CounterValue, blockOut, containerName))
-		} else {
-			skippedEntries++
 		}
 
-		if pids, ok := parseDockerFloat(containerStats, "PIDS"); ok {
-			metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerPids, prometheus.GaugeValue, pids, containerName))
-		} else {
+		if pids, ok := parseDockerFloat(containerStats, "PIDS"); !ok {
 			skippedEntries++
+		} else if collector.metricFilter.Enabled("sonic_docker_container_pids") {
+			metrics = append(metrics, prometheus.MustNewConstMetric(collector.containerPids, prometheus.GaugeValue, pids, containerName))
 		}
 
 		containerCount++
