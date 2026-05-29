@@ -33,8 +33,9 @@ type lagCollector struct {
 	cacheAge               *prometheus.Desc
 	skippedEntries         *prometheus.Desc
 
-	logger *slog.Logger
-	config lagCollectorConfig
+	logger       *slog.Logger
+	metricFilter MetricFilter
+	config       lagCollectorConfig
 
 	mu                 sync.RWMutex
 	cachedMetrics      []prometheus.Metric
@@ -49,7 +50,7 @@ type lagMemberEntry struct {
 	status string
 }
 
-func NewLagCollector(logger *slog.Logger) *lagCollector {
+func NewLagCollector(logger *slog.Logger, metricFilter MetricFilter) *lagCollector {
 	const (
 		namespace = "sonic"
 		subsystem = "lag"
@@ -74,8 +75,9 @@ func NewLagCollector(logger *slog.Logger) *lagCollector {
 			"Age of latest LAG cache refresh", nil, nil),
 		skippedEntries: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "entries_skipped"),
 			"Number of LAG entries skipped during latest refresh", nil, nil),
-		logger: logger,
-		config: loadLagCollectorConfig(logger),
+		logger:       logger,
+		metricFilter: metricFilter,
+		config:       loadLagCollectorConfig(logger),
 	}
 
 	if !collector.config.enabled {
@@ -127,10 +129,18 @@ func (collector *lagCollector) Collect(ch chan<- prometheus.Metric) {
 		cacheAge = time.Since(lastRefreshTime).Seconds()
 	}
 
-	ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
-	ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
-	ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
-	ch <- prometheus.MustNewConstMetric(collector.skippedEntries, prometheus.GaugeValue, lastSkippedEntries)
+	if collector.metricFilter.Enabled("sonic_lag_scrape_duration_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
+	}
+	if collector.metricFilter.Enabled("sonic_lag_collector_success") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
+	}
+	if collector.metricFilter.Enabled("sonic_lag_cache_age_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
+	}
+	if collector.metricFilter.Enabled("sonic_lag_entries_skipped") {
+		ch <- prometheus.MustNewConstMetric(collector.skippedEntries, prometheus.GaugeValue, lastSkippedEntries)
+	}
 }
 
 func (collector *lagCollector) refreshLoop() {
@@ -258,14 +268,16 @@ func (collector *lagCollector) scrapeMetrics(ctx context.Context) ([]prometheus.
 			return nil, 0, fmt.Errorf("failed to read APPL_DB LAG_TABLE:%s: %w", lagName, err)
 		}
 
-		metrics = append(metrics, prometheus.MustNewConstMetric(collector.lagInfo, prometheus.GaugeValue, 1, lagName))
+		if collector.metricFilter.Enabled("sonic_lag_info") {
+			metrics = append(metrics, prometheus.MustNewConstMetric(collector.lagInfo, prometheus.GaugeValue, 1, lagName))
+		}
 
 		adminStatus := firstNonEmpty(applData["admin_status"], configData["admin_status"])
-		if adminStatus != "" {
+		if adminStatus != "" && collector.metricFilter.Enabled("sonic_lag_admin_status") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.lagAdminStatus, prometheus.GaugeValue, statusToGauge(adminStatus), lagName))
 		}
 
-		if operStatus := applData["oper_status"]; operStatus != "" {
+		if operStatus := applData["oper_status"]; operStatus != "" && collector.metricFilter.Enabled("sonic_lag_oper_status") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.lagOperStatus, prometheus.GaugeValue, statusToGauge(operStatus), lagName))
 		}
 
@@ -281,19 +293,23 @@ func (collector *lagCollector) scrapeMetrics(ctx context.Context) ([]prometheus.
 				continue
 			}
 
-			metrics = append(metrics, prometheus.MustNewConstMetric(
-				collector.lagMemberStatus,
-				prometheus.GaugeValue,
-				statusToGauge(member.status),
-				lagName,
-				member.name,
-			))
+			if collector.metricFilter.Enabled("sonic_lag_member_status") {
+				metrics = append(metrics, prometheus.MustNewConstMetric(
+					collector.lagMemberStatus,
+					prometheus.GaugeValue,
+					statusToGauge(member.status),
+					lagName,
+					member.name,
+				))
+			}
 
 			processedMembers++
 			memberCount++
 		}
 
-		metrics = append(metrics, prometheus.MustNewConstMetric(collector.lagMembers, prometheus.GaugeValue, float64(memberCount), lagName))
+		if collector.metricFilter.Enabled("sonic_lag_members") {
+			metrics = append(metrics, prometheus.MustNewConstMetric(collector.lagMembers, prometheus.GaugeValue, float64(memberCount), lagName))
+		}
 		processedLags++
 	}
 

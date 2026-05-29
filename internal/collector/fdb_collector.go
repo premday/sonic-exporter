@@ -42,8 +42,9 @@ type fdbCollector struct {
 	scrapeCollectorSuccess *prometheus.Desc
 	cacheAge               *prometheus.Desc
 
-	logger *slog.Logger
-	config fdbCollectorConfig
+	logger       *slog.Logger
+	metricFilter MetricFilter
+	config       fdbCollectorConfig
 
 	mu                 sync.RWMutex
 	cachedMetrics      []prometheus.Metric
@@ -60,7 +61,7 @@ type fdbEntryKey struct {
 	Mac  string `json:"mac"`
 }
 
-func NewFdbCollector(logger *slog.Logger) *fdbCollector {
+func NewFdbCollector(logger *slog.Logger, metricFilter MetricFilter) *fdbCollector {
 	const (
 		namespace = "sonic"
 		subsystem = "fdb"
@@ -87,8 +88,9 @@ func NewFdbCollector(logger *slog.Logger) *fdbCollector {
 			"Whether FDB collector succeeded", nil, nil),
 		cacheAge: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "cache_age_seconds"),
 			"Age of latest FDB cache refresh", nil, nil),
-		logger: logger,
-		config: loadFdbCollectorConfig(logger),
+		logger:       logger,
+		metricFilter: metricFilter,
+		config:       loadFdbCollectorConfig(logger),
 	}
 
 	if !collector.config.enabled {
@@ -142,11 +144,21 @@ func (collector *fdbCollector) Collect(ch chan<- prometheus.Metric) {
 		cacheAge = time.Since(lastRefreshTime).Seconds()
 	}
 
-	ch <- prometheus.MustNewConstMetric(collector.fdbEntriesSkipped, prometheus.GaugeValue, lastSkippedEntries)
-	ch <- prometheus.MustNewConstMetric(collector.fdbEntriesTruncated, prometheus.GaugeValue, lastTruncated)
-	ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
-	ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
-	ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
+	if collector.metricFilter.Enabled("sonic_fdb_entries_skipped") {
+		ch <- prometheus.MustNewConstMetric(collector.fdbEntriesSkipped, prometheus.GaugeValue, lastSkippedEntries)
+	}
+	if collector.metricFilter.Enabled("sonic_fdb_entries_truncated") {
+		ch <- prometheus.MustNewConstMetric(collector.fdbEntriesTruncated, prometheus.GaugeValue, lastTruncated)
+	}
+	if collector.metricFilter.Enabled("sonic_fdb_scrape_duration_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
+	}
+	if collector.metricFilter.Enabled("sonic_fdb_collector_success") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
+	}
+	if collector.metricFilter.Enabled("sonic_fdb_cache_age_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
+	}
 }
 
 func (collector *fdbCollector) refreshLoop() {
@@ -266,8 +278,12 @@ func (collector *fdbCollector) scrapeMetrics(ctx context.Context) ([]prometheus.
 	}
 
 	metrics := make([]prometheus.Metric, 0, len(entriesByVLAN)+len(entriesByPort)+len(entriesByType)+2)
-	metrics = append(metrics, prometheus.MustNewConstMetric(collector.fdbEntries, prometheus.GaugeValue, entriesTotal))
-	metrics = append(metrics, prometheus.MustNewConstMetric(collector.fdbEntriesUnknownVlan, prometheus.GaugeValue, unknownVLANEntries))
+	if collector.metricFilter.Enabled("sonic_fdb_entries") {
+		metrics = append(metrics, prometheus.MustNewConstMetric(collector.fdbEntries, prometheus.GaugeValue, entriesTotal))
+	}
+	if collector.metricFilter.Enabled("sonic_fdb_entries_unknown_vlan") {
+		metrics = append(metrics, prometheus.MustNewConstMetric(collector.fdbEntriesUnknownVlan, prometheus.GaugeValue, unknownVLANEntries))
+	}
 
 	vlanNames := sortedMapKeys(entriesByVLAN)
 	for idx, vlanName := range vlanNames {
@@ -275,7 +291,9 @@ func (collector *fdbCollector) scrapeMetrics(ctx context.Context) ([]prometheus.
 			skippedEntries += len(vlanNames) - idx
 			break
 		}
-		metrics = append(metrics, prometheus.MustNewConstMetric(collector.fdbEntriesByVlan, prometheus.GaugeValue, entriesByVLAN[vlanName], vlanName))
+		if collector.metricFilter.Enabled("sonic_fdb_entries_by_vlan") {
+			metrics = append(metrics, prometheus.MustNewConstMetric(collector.fdbEntriesByVlan, prometheus.GaugeValue, entriesByVLAN[vlanName], vlanName))
+		}
 	}
 
 	portNames := sortedMapKeys(entriesByPort)
@@ -284,12 +302,16 @@ func (collector *fdbCollector) scrapeMetrics(ctx context.Context) ([]prometheus.
 			skippedEntries += len(portNames) - idx
 			break
 		}
-		metrics = append(metrics, prometheus.MustNewConstMetric(collector.fdbEntriesByPort, prometheus.GaugeValue, entriesByPort[portName], portName))
+		if collector.metricFilter.Enabled("sonic_fdb_entries_by_port") {
+			metrics = append(metrics, prometheus.MustNewConstMetric(collector.fdbEntriesByPort, prometheus.GaugeValue, entriesByPort[portName], portName))
+		}
 	}
 
 	entryTypes := sortedMapKeys(entriesByType)
 	for _, entryType := range entryTypes {
-		metrics = append(metrics, prometheus.MustNewConstMetric(collector.fdbEntriesByType, prometheus.GaugeValue, entriesByType[entryType], entryType))
+		if collector.metricFilter.Enabled("sonic_fdb_entries_by_type") {
+			metrics = append(metrics, prometheus.MustNewConstMetric(collector.fdbEntriesByType, prometheus.GaugeValue, entriesByType[entryType], entryType))
+		}
 	}
 
 	return metrics, skippedEntries, truncated, nil

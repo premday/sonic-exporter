@@ -32,8 +32,9 @@ type lldpCollector struct {
 	cacheAge               *prometheus.Desc
 	skippedEntries         *prometheus.Desc
 
-	logger *slog.Logger
-	config lldpCollectorConfig
+	logger       *slog.Logger
+	metricFilter MetricFilter
+	config       lldpCollectorConfig
 
 	mu                 sync.RWMutex
 	cachedMetrics      []prometheus.Metric
@@ -44,7 +45,7 @@ type lldpCollector struct {
 	lastRefreshTime    time.Time
 }
 
-func NewLldpCollector(logger *slog.Logger) *lldpCollector {
+func NewLldpCollector(logger *slog.Logger, metricFilter MetricFilter) *lldpCollector {
 	const (
 		namespace = "sonic"
 		subsystem = "lldp"
@@ -63,8 +64,9 @@ func NewLldpCollector(logger *slog.Logger) *lldpCollector {
 			"Age of latest LLDP cache refresh", nil, nil),
 		skippedEntries: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "entries_skipped"),
 			"Number of LLDP entries skipped during latest refresh", nil, nil),
-		logger: logger,
-		config: loadLldpCollectorConfig(logger),
+		logger:       logger,
+		metricFilter: metricFilter,
+		config:       loadLldpCollectorConfig(logger),
 	}
 
 	if !collector.config.enabled {
@@ -114,11 +116,21 @@ func (collector *lldpCollector) Collect(ch chan<- prometheus.Metric) {
 		cacheAge = time.Since(lastRefreshTime).Seconds()
 	}
 
-	ch <- prometheus.MustNewConstMetric(collector.lldpNeighbors, prometheus.GaugeValue, lastNeighbors)
-	ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
-	ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
-	ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
-	ch <- prometheus.MustNewConstMetric(collector.skippedEntries, prometheus.GaugeValue, lastSkippedEntries)
+	if collector.metricFilter.Enabled("sonic_lldp_neighbors") {
+		ch <- prometheus.MustNewConstMetric(collector.lldpNeighbors, prometheus.GaugeValue, lastNeighbors)
+	}
+	if collector.metricFilter.Enabled("sonic_lldp_scrape_duration_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
+	}
+	if collector.metricFilter.Enabled("sonic_lldp_collector_success") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
+	}
+	if collector.metricFilter.Enabled("sonic_lldp_cache_age_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
+	}
+	if collector.metricFilter.Enabled("sonic_lldp_entries_skipped") {
+		ch <- prometheus.MustNewConstMetric(collector.skippedEntries, prometheus.GaugeValue, lastSkippedEntries)
+	}
 }
 
 func (collector *lldpCollector) refreshLoop() {
@@ -220,18 +232,20 @@ func (collector *lldpCollector) scrapeMetrics(ctx context.Context) ([]prometheus
 			localRole = "other"
 		}
 
-		metrics = append(metrics, prometheus.MustNewConstMetric(
-			collector.lldpNeighborInfo, prometheus.GaugeValue, 1,
-			localInterface,
-			localRole,
-			remoteSystemName,
-			remotePortID,
-			remotePortDesc,
-			remotePortIDSubtype,
-			remotePortDisplay,
-			remoteChassisID,
-			remoteMgmtIP,
-		))
+		if collector.metricFilter.Enabled("sonic_lldp_neighbor_info") {
+			metrics = append(metrics, prometheus.MustNewConstMetric(
+				collector.lldpNeighborInfo, prometheus.GaugeValue, 1,
+				localInterface,
+				localRole,
+				remoteSystemName,
+				remotePortID,
+				remotePortDesc,
+				remotePortIDSubtype,
+				remotePortDisplay,
+				remoteChassisID,
+				remoteMgmtIP,
+			))
+		}
 		neighbors++
 	}
 

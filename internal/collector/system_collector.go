@@ -71,8 +71,9 @@ type systemCollector struct {
 	scrapeCollectorSuccess *prometheus.Desc
 	cacheAge               *prometheus.Desc
 
-	logger *slog.Logger
-	config systemCollectorConfig
+	logger       *slog.Logger
+	metricFilter MetricFilter
+	config       systemCollectorConfig
 
 	mu                 sync.RWMutex
 	cachedMetrics      []prometheus.Metric
@@ -112,7 +113,7 @@ func (b *limitedOutputBuffer) String() string {
 	return b.buf.String()
 }
 
-func NewSystemCollector(logger *slog.Logger) *systemCollector {
+func NewSystemCollector(logger *slog.Logger, metricFilter MetricFilter) *systemCollector {
 	const (
 		namespace = "sonic"
 		subsystem = "system"
@@ -131,8 +132,9 @@ func NewSystemCollector(logger *slog.Logger) *systemCollector {
 			"Whether system collector succeeded", nil, nil),
 		cacheAge: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "cache_age_seconds"),
 			"Age of latest system cache refresh", nil, nil),
-		logger: logger,
-		config: loadSystemCollectorConfig(logger),
+		logger:       logger,
+		metricFilter: metricFilter,
+		config:       loadSystemCollectorConfig(logger),
 	}
 
 	if !collector.config.enabled {
@@ -180,9 +182,15 @@ func (collector *systemCollector) Collect(ch chan<- prometheus.Metric) {
 		cacheAge = time.Since(lastRefreshTime).Seconds()
 	}
 
-	ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
-	ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
-	ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
+	if collector.metricFilter.Enabled("sonic_system_scrape_duration_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeDuration, prometheus.GaugeValue, lastScrapeDuration)
+	}
+	if collector.metricFilter.Enabled("sonic_system_collector_success") {
+		ch <- prometheus.MustNewConstMetric(collector.scrapeCollectorSuccess, prometheus.GaugeValue, lastSuccess)
+	}
+	if collector.metricFilter.Enabled("sonic_system_cache_age_seconds") {
+		ch <- prometheus.MustNewConstMetric(collector.cacheAge, prometheus.GaugeValue, cacheAge)
+	}
 }
 
 func (collector *systemCollector) refreshLoop() {
@@ -240,8 +248,10 @@ func (collector *systemCollector) scrapeMetrics(ctx context.Context) ([]promethe
 
 	metadata = collector.finalizeMetadata(metadata)
 
-	metrics := []prometheus.Metric{
-		prometheus.MustNewConstMetric(
+	metrics := []prometheus.Metric{}
+
+	if collector.metricFilter.Enabled("sonic_system_identity_info") {
+		metrics = append(metrics, prometheus.MustNewConstMetric(
 			collector.identityInfo,
 			prometheus.GaugeValue,
 			1,
@@ -253,8 +263,11 @@ func (collector *systemCollector) scrapeMetrics(ctx context.Context) ([]promethe
 			metadata.serial,
 			metadata.model,
 			metadata.revision,
-		),
-		prometheus.MustNewConstMetric(
+		))
+	}
+
+	if collector.metricFilter.Enabled("sonic_system_software_info") {
+		metrics = append(metrics, prometheus.MustNewConstMetric(
 			collector.softwareInfo,
 			prometheus.GaugeValue,
 			1,
@@ -267,8 +280,11 @@ func (collector *systemCollector) scrapeMetrics(ctx context.Context) ([]promethe
 			metadata.builtBy,
 			metadata.branch,
 			metadata.release,
-		),
-		prometheus.MustNewConstMetric(collector.uptimeSeconds, prometheus.GaugeValue, metadata.uptimeSeconds),
+		))
+	}
+
+	if collector.metricFilter.Enabled("sonic_system_uptime_seconds") {
+		metrics = append(metrics, prometheus.MustNewConstMetric(collector.uptimeSeconds, prometheus.GaugeValue, metadata.uptimeSeconds))
 	}
 
 	return metrics, nil
