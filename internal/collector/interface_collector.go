@@ -13,6 +13,28 @@ import (
 	"github.com/vinted/sonic-exporter/pkg/redis"
 )
 
+const (
+	interfaceInfoMetricName                    = "sonic_interface_info"
+	interfaceMtuMetricName                     = "sonic_interface_mtu_bytes"
+	interfaceSpeedMetricName                   = "sonic_interface_speed_bytes"
+	interfaceAdminStatusMetricName             = "sonic_interface_admin_status"
+	interfaceOperationalStatusMetricName       = "sonic_interface_operational_status"
+	interfaceTransceiverTemperatureMetricName  = "sonic_interface_transceiver_temperature_celsius"
+	interfaceTransceiverVoltageMetricName      = "sonic_interface_transceiver_voltage"
+	interfaceOpticTransmitPowerMetricName      = "sonic_interface_optic_transmit_power_dbm"
+	interfaceTransmitEthernetPacketsMetricName = "sonic_interface_transmit_ethernet_packets_total"
+	interfaceTransmitPacketsMetricName         = "sonic_interface_transmit_packets_total"
+	interfaceTransmitBytesMetricName           = "sonic_interface_transmit_bytes_total"
+	interfaceTransmitErrsMetricName            = "sonic_interface_transmit_errs_total"
+	interfaceOpticReceivePowerMetricName       = "sonic_interface_optic_receive_power_dbm"
+	interfaceReceiveEthernetPacketsMetricName  = "sonic_interface_receive_ethernet_packets_total"
+	interfaceReceivePacketsMetricName          = "sonic_interface_receive_packets_total"
+	interfaceReceiveBytesMetricName            = "sonic_interface_receive_bytes_total"
+	interfaceReceiveErrsMetricName             = "sonic_interface_receive_errs_total"
+	interfaceScrapeDurationMetricName          = "sonic_interface_scrape_duration_seconds"
+	interfaceCollectorSuccessMetricName        = "sonic_interface_collector_success"
+)
+
 type packetSize string
 
 type interfaceCollector struct {
@@ -38,10 +60,11 @@ type interfaceCollector struct {
 	cachedMetrics                    []prometheus.Metric
 	lastScrapeTime                   time.Time
 	logger                           *slog.Logger
+	metricFilter                     MetricFilter
 	mu                               sync.Mutex
 }
 
-func NewInterfaceCollector(logger *slog.Logger) *interfaceCollector {
+func NewInterfaceCollector(logger *slog.Logger, metricFilter MetricFilter) *interfaceCollector {
 	const (
 		namespace = "sonic"
 		subsystem = "interface"
@@ -86,7 +109,8 @@ func NewInterfaceCollector(logger *slog.Logger) *interfaceCollector {
 			"Time it took for prometheus to scrape sonic interface metrics", nil, nil),
 		scrapeCollectorSuccess: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "collector_success"),
 			"Whether interface collector succeeded", nil, nil),
-		logger: logger,
+		logger:       logger,
+		metricFilter: metricFilter,
 	}
 }
 
@@ -115,9 +139,11 @@ func (collector *interfaceCollector) Collect(ch chan<- prometheus.Metric) {
 		scrapeSuccess = 0
 		collector.logger.Error("Error scraping metrics", "error", err)
 	}
-	collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-		collector.scrapeCollectorSuccess, prometheus.GaugeValue, scrapeSuccess,
-	))
+	if collector.metricFilter.Enabled(interfaceCollectorSuccessMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			collector.scrapeCollectorSuccess, prometheus.GaugeValue, scrapeSuccess,
+		))
+	}
 
 	for _, cachedMetric := range collector.cachedMetrics {
 		ch <- cachedMetric
@@ -166,9 +192,11 @@ func (collector *interfaceCollector) scrapeMetrics(ctx context.Context) error {
 	collector.logger.Info("Ending interface metric scrape")
 
 	collector.lastScrapeTime = time.Now()
-	collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-		collector.scrapeDuration, prometheus.GaugeValue, time.Since(scrapeTime).Seconds(),
-	))
+	if collector.metricFilter.Enabled(interfaceScrapeDurationMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			collector.scrapeDuration, prometheus.GaugeValue, time.Since(scrapeTime).Seconds(),
+		))
+	}
 	return nil
 }
 
@@ -268,17 +296,23 @@ func (collector *interfaceCollector) collectInterfaceConfigInfo(ctx context.Cont
 		return fmt.Errorf("value parse failed: %w", err)
 	}
 
-	collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-		collector.interfaceInfo, prometheus.GaugeValue, 1, interfaceName, info["alias"], info["index"], description,
-	))
+	if collector.metricFilter.Enabled(interfaceInfoMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			collector.interfaceInfo, prometheus.GaugeValue, 1, interfaceName, info["alias"], info["index"], description,
+		))
+	}
 
-	collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-		collector.interfaceMtu, prometheus.GaugeValue, mtu, interfaceName,
-	))
+	if collector.metricFilter.Enabled(interfaceMtuMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			collector.interfaceMtu, prometheus.GaugeValue, mtu, interfaceName,
+		))
+	}
 
-	collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-		collector.interfaceSpeed, prometheus.GaugeValue, speed*1000*1000/8, interfaceName,
-	))
+	if collector.metricFilter.Enabled(interfaceSpeedMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			collector.interfaceSpeed, prometheus.GaugeValue, speed*1000*1000/8, interfaceName,
+		))
+	}
 
 	return nil
 }
@@ -303,13 +337,17 @@ func (collector *interfaceCollector) collectInterfaceOperationInfo(ctx context.C
 		operationalStatus = 1
 	}
 
-	collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-		collector.interfaceAdminStatus, prometheus.GaugeValue, adminStatus, interfaceName,
-	))
+	if collector.metricFilter.Enabled(interfaceAdminStatusMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			collector.interfaceAdminStatus, prometheus.GaugeValue, adminStatus, interfaceName,
+		))
+	}
 
-	collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-		collector.interfaceOperationslStatus, prometheus.GaugeValue, operationalStatus, interfaceName,
-	))
+	if collector.metricFilter.Enabled(interfaceOperationalStatusMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			collector.interfaceOperationslStatus, prometheus.GaugeValue, operationalStatus, interfaceName,
+		))
+	}
 
 	return nil
 }
@@ -342,23 +380,31 @@ func (collector *interfaceCollector) collectInterfaceOpticalInfo(ctx context.Con
 
 			switch name := metric; {
 			case name == "temperature":
-				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-					collector.interfaceTransceiverTemperature, prometheus.GaugeValue, parsedValue, interfaceName,
-				))
+				if collector.metricFilter.Enabled(interfaceTransceiverTemperatureMetricName) {
+					collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+						collector.interfaceTransceiverTemperature, prometheus.GaugeValue, parsedValue, interfaceName,
+					))
+				}
 			case name == "voltage":
-				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-					collector.interfaceTransceiverVoltage, prometheus.GaugeValue, parsedValue, interfaceName,
-				))
+				if collector.metricFilter.Enabled(interfaceTransceiverVoltageMetricName) {
+					collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+						collector.interfaceTransceiverVoltage, prometheus.GaugeValue, parsedValue, interfaceName,
+					))
+				}
 			case rxPowerRegex.MatchString(name):
 				opticUnit := rxPowerRegex.FindStringSubmatch(name)[1]
-				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-					collector.interfaceOpticReceivePower, prometheus.GaugeValue, parsedValue, interfaceName, opticUnit,
-				))
+				if collector.metricFilter.Enabled(interfaceOpticReceivePowerMetricName) {
+					collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+						collector.interfaceOpticReceivePower, prometheus.GaugeValue, parsedValue, interfaceName, opticUnit,
+					))
+				}
 			case txPowerRegex.MatchString(name):
 				opticUnit := txPowerRegex.FindStringSubmatch(name)[1]
-				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-					collector.interfaceOpticTransmitPower, prometheus.GaugeValue, parsedValue, interfaceName, opticUnit,
-				))
+				if collector.metricFilter.Enabled(interfaceOpticTransmitPowerMetricName) {
+					collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+						collector.interfaceOpticTransmitPower, prometheus.GaugeValue, parsedValue, interfaceName, opticUnit,
+					))
+				}
 			}
 		}
 	}
@@ -376,17 +422,21 @@ func (collector *interfaceCollector) collectInterfaceByteCounters(interfaceName 
 
 		switch direction {
 		case "in":
-			collector.cachedMetrics = append(collector.cachedMetrics,
-				prometheus.MustNewConstMetric(
-					collector.interfaceReceivedBytes, prometheus.CounterValue, bytes, interfaceName,
-				),
-			)
+			if collector.metricFilter.Enabled(interfaceReceiveBytesMetricName) {
+				collector.cachedMetrics = append(collector.cachedMetrics,
+					prometheus.MustNewConstMetric(
+						collector.interfaceReceivedBytes, prometheus.CounterValue, bytes, interfaceName,
+					),
+				)
+			}
 		case "out":
-			collector.cachedMetrics = append(collector.cachedMetrics,
-				prometheus.MustNewConstMetric(
-					collector.interfaceTransmitBytes, prometheus.CounterValue, bytes, interfaceName,
-				),
-			)
+			if collector.metricFilter.Enabled(interfaceTransmitBytesMetricName) {
+				collector.cachedMetrics = append(collector.cachedMetrics,
+					prometheus.MustNewConstMetric(
+						collector.interfaceTransmitBytes, prometheus.CounterValue, bytes, interfaceName,
+					),
+				)
+			}
 		}
 	}
 
@@ -417,17 +467,21 @@ func (collector *interfaceCollector) collectInterfaceErrCounters(interfaceName s
 
 			switch direction {
 			case "in":
-				collector.cachedMetrics = append(collector.cachedMetrics,
-					prometheus.MustNewConstMetric(
-						collector.interfaceReceiveErrs, prometheus.CounterValue, packets, interfaceName, errType,
-					),
-				)
+				if collector.metricFilter.Enabled(interfaceReceiveErrsMetricName) {
+					collector.cachedMetrics = append(collector.cachedMetrics,
+						prometheus.MustNewConstMetric(
+							collector.interfaceReceiveErrs, prometheus.CounterValue, packets, interfaceName, errType,
+						),
+					)
+				}
 			case "out":
-				collector.cachedMetrics = append(collector.cachedMetrics,
-					prometheus.MustNewConstMetric(
-						collector.interfaceTransmitErrs, prometheus.CounterValue, packets, interfaceName, errType,
-					),
-				)
+				if collector.metricFilter.Enabled(interfaceTransmitErrsMetricName) {
+					collector.cachedMetrics = append(collector.cachedMetrics,
+						prometheus.MustNewConstMetric(
+							collector.interfaceTransmitErrs, prometheus.CounterValue, packets, interfaceName, errType,
+						),
+					)
+				}
 			}
 		}
 	}
@@ -447,17 +501,21 @@ func (collector *interfaceCollector) collectInterfacePacketCounters(interfaceNam
 
 			switch direction {
 			case "in":
-				collector.cachedMetrics = append(collector.cachedMetrics,
-					prometheus.MustNewConstMetric(
-						collector.interfaceReceivePackets, prometheus.CounterValue, packets, interfaceName, method,
-					),
-				)
+				if collector.metricFilter.Enabled(interfaceReceivePacketsMetricName) {
+					collector.cachedMetrics = append(collector.cachedMetrics,
+						prometheus.MustNewConstMetric(
+							collector.interfaceReceivePackets, prometheus.CounterValue, packets, interfaceName, method,
+						),
+					)
+				}
 			case "out":
-				collector.cachedMetrics = append(collector.cachedMetrics,
-					prometheus.MustNewConstMetric(
-						collector.interfaceTransmitPackets, prometheus.CounterValue, packets, interfaceName, method,
-					),
-				)
+				if collector.metricFilter.Enabled(interfaceTransmitPacketsMetricName) {
+					collector.cachedMetrics = append(collector.cachedMetrics,
+						prometheus.MustNewConstMetric(
+							collector.interfaceTransmitPackets, prometheus.CounterValue, packets, interfaceName, method,
+						),
+					)
+				}
 			}
 		}
 	}
@@ -506,13 +564,17 @@ func (collector *interfaceCollector) collectInterfacePacketSizeCounters(interfac
 
 			switch direction {
 			case "in":
-				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-					collector.interfaceReceiveEthernetPackets, prometheus.CounterValue, bytes, interfaceName, string(size),
-				))
+				if collector.metricFilter.Enabled(interfaceReceiveEthernetPacketsMetricName) {
+					collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+						collector.interfaceReceiveEthernetPackets, prometheus.CounterValue, bytes, interfaceName, string(size),
+					))
+				}
 			case "out":
-				collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-					collector.interfaceTransmitEthernetPackets, prometheus.CounterValue, bytes, interfaceName, string(size),
-				))
+				if collector.metricFilter.Enabled(interfaceTransmitEthernetPacketsMetricName) {
+					collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+						collector.interfaceTransmitEthernetPackets, prometheus.CounterValue, bytes, interfaceName, string(size),
+					))
+				}
 			}
 		}
 	}

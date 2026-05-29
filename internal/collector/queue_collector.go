@@ -12,6 +12,17 @@ import (
 	"github.com/vinted/sonic-exporter/pkg/redis"
 )
 
+const (
+	queuePacketsMetricName              = "sonic_queue_packets_total"
+	queueBytesMetricName                = "sonic_queue_bytes_total"
+	queueDroppedPacketsMetricName       = "sonic_queue_dropped_packets_total"
+	queueDroppedBytesMetricName         = "sonic_queue_dropped_bytes_total"
+	queueSharedWatermarkBytesMetricName = "sonic_queue_shared_watermark_bytes_total"
+	queueWatermarkBytesMetricName       = "sonic_queue_watermark_bytes_total"
+	queueScrapeDurationMetricName       = "sonic_queue_scrape_duration_seconds"
+	queueCollectorSuccessMetricName     = "sonic_queue_collector_success"
+)
+
 type queueCollector struct {
 	queuePackets              *prometheus.Desc
 	queueBytes                *prometheus.Desc
@@ -24,10 +35,11 @@ type queueCollector struct {
 	cachedMetrics             []prometheus.Metric
 	lastScrapeTime            time.Time
 	logger                    *slog.Logger
+	metricFilter              MetricFilter
 	mu                        sync.Mutex
 }
 
-func NewQueueCollector(logger *slog.Logger) *queueCollector {
+func NewQueueCollector(logger *slog.Logger, metricFilter MetricFilter) *queueCollector {
 	const (
 		namespace = "sonic"
 		subsystem = "queue"
@@ -50,7 +62,8 @@ func NewQueueCollector(logger *slog.Logger) *queueCollector {
 			"Time it took for prometheus to scrape sonic queue metrics", nil, nil),
 		scrapeCollectorSuccess: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "collector_success"),
 			"Whether queue collector succeeded", nil, nil),
-		logger: logger,
+		logger:       logger,
+		metricFilter: metricFilter,
 	}
 }
 
@@ -79,9 +92,11 @@ func (collector *queueCollector) Collect(ch chan<- prometheus.Metric) {
 		scrapeSuccess = 0
 		collector.logger.Error("Error scraping metrics", "error", err)
 	}
-	collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-		collector.scrapeCollectorSuccess, prometheus.GaugeValue, scrapeSuccess,
-	))
+	if collector.metricFilter.Enabled(queueCollectorSuccessMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			collector.scrapeCollectorSuccess, prometheus.GaugeValue, scrapeSuccess,
+		))
+	}
 
 	for _, cachedMetric := range collector.cachedMetrics {
 		ch <- cachedMetric
@@ -118,18 +133,22 @@ func (collector *queueCollector) scrapeMetrics(ctx context.Context) error {
 			return fmt.Errorf("queue counters collection failed: %w", err)
 		}
 
-		err = collector.collectQueueWatermarks(ctx, redisClient, interfaceName, queueNumber, queues[queue])
-		if err != nil {
-			return fmt.Errorf("queue watermarks collection failed: %w", err)
+		if collector.metricFilter.Enabled(queueWatermarkBytesMetricName) {
+			err = collector.collectQueueWatermarks(ctx, redisClient, interfaceName, queueNumber, queues[queue])
+			if err != nil {
+				return fmt.Errorf("queue watermarks collection failed: %w", err)
+			}
 		}
 	}
 
 	collector.logger.Info("Ending queue metric scrape")
 
 	collector.lastScrapeTime = time.Now()
-	collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
-		collector.scrapeDuration, prometheus.GaugeValue, time.Since(scrapeTime).Seconds(),
-	))
+	if collector.metricFilter.Enabled(queueScrapeDurationMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			collector.scrapeDuration, prometheus.GaugeValue, time.Since(scrapeTime).Seconds(),
+		))
+	}
 	return nil
 }
 
@@ -158,55 +177,65 @@ func (collector *queueCollector) collectQueueCounters(ctx context.Context, redis
 		return fmt.Errorf("value parse failed: %w", err)
 	}
 
-	collector.cachedMetrics = append(collector.cachedMetrics,
-		prometheus.MustNewConstMetric(
-			collector.queuePackets, prometheus.CounterValue, packets, interfaceName, queueNumber,
-		),
-	)
+	if collector.metricFilter.Enabled(queuePacketsMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics,
+			prometheus.MustNewConstMetric(
+				collector.queuePackets, prometheus.CounterValue, packets, interfaceName, queueNumber,
+			),
+		)
+	}
 
 	bytes, err := parseFloat(counters["SAI_QUEUE_STAT_BYTES"])
 	if err != nil {
 		return fmt.Errorf("value parse failed: %w", err)
 	}
 
-	collector.cachedMetrics = append(collector.cachedMetrics,
-		prometheus.MustNewConstMetric(
-			collector.queueBytes, prometheus.CounterValue, bytes, interfaceName, queueNumber,
-		),
-	)
+	if collector.metricFilter.Enabled(queueBytesMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics,
+			prometheus.MustNewConstMetric(
+				collector.queueBytes, prometheus.CounterValue, bytes, interfaceName, queueNumber,
+			),
+		)
+	}
 
 	droppedPackets, err := parseFloat(counters["SAI_QUEUE_STAT_DROPPED_PACKETS"])
 	if err != nil {
 		return fmt.Errorf("value parse failed: %w", err)
 	}
 
-	collector.cachedMetrics = append(collector.cachedMetrics,
-		prometheus.MustNewConstMetric(
-			collector.queueDroppedPackets, prometheus.CounterValue, droppedPackets, interfaceName, queueNumber,
-		),
-	)
+	if collector.metricFilter.Enabled(queueDroppedPacketsMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics,
+			prometheus.MustNewConstMetric(
+				collector.queueDroppedPackets, prometheus.CounterValue, droppedPackets, interfaceName, queueNumber,
+			),
+		)
+	}
 
 	droppedBytes, err := parseFloat(counters["SAI_QUEUE_STAT_DROPPED_BYTES"])
 	if err != nil {
 		return fmt.Errorf("value parse failed: %w", err)
 	}
 
-	collector.cachedMetrics = append(collector.cachedMetrics,
-		prometheus.MustNewConstMetric(
-			collector.queueDroppedBytes, prometheus.CounterValue, droppedBytes, interfaceName, queueNumber,
-		),
-	)
+	if collector.metricFilter.Enabled(queueDroppedBytesMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics,
+			prometheus.MustNewConstMetric(
+				collector.queueDroppedBytes, prometheus.CounterValue, droppedBytes, interfaceName, queueNumber,
+			),
+		)
+	}
 
 	sharedWatermarkBytes, err := parseFloat(counters["SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES"])
 	if err != nil {
 		return fmt.Errorf("value parse failed: %w", err)
 	}
 
-	collector.cachedMetrics = append(collector.cachedMetrics,
-		prometheus.MustNewConstMetric(
-			collector.queueSharedWatermarkBytes, prometheus.CounterValue, sharedWatermarkBytes, interfaceName, queueNumber,
-		),
-	)
+	if collector.metricFilter.Enabled(queueSharedWatermarkBytesMetricName) {
+		collector.cachedMetrics = append(collector.cachedMetrics,
+			prometheus.MustNewConstMetric(
+				collector.queueSharedWatermarkBytes, prometheus.CounterValue, sharedWatermarkBytes, interfaceName, queueNumber,
+			),
+		)
+	}
 
 	return nil
 }
@@ -237,12 +266,14 @@ func (collector *queueCollector) collectQueueWatermarks(ctx context.Context, red
 				watermarkLabel = strings.TrimSuffix(watermarkLabel, suffix)
 			}
 
-			collector.cachedMetrics = append(collector.cachedMetrics,
-				prometheus.MustNewConstMetric(
-					collector.queueWatermarksBytes, prometheus.CounterValue, watermarkValue,
-					interfaceName, queueNumber, strings.ToLower(watermarkType), strings.ToLower(watermarkLabel),
-				),
-			)
+			if collector.metricFilter.Enabled(queueWatermarkBytesMetricName) {
+				collector.cachedMetrics = append(collector.cachedMetrics,
+					prometheus.MustNewConstMetric(
+						collector.queueWatermarksBytes, prometheus.CounterValue, watermarkValue,
+						interfaceName, queueNumber, strings.ToLower(watermarkType), strings.ToLower(watermarkLabel),
+					),
+				)
+			}
 		}
 	}
 
