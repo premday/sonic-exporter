@@ -106,66 +106,57 @@ curl localhost:9101/metrics
 
 `docker-compose.yaml` is for local development only. It starts a test Redis container and is not the production SONiC deployment pattern.
 
+### Choose your path
+
+| Goal | Use this path | Why | Start here |
+|---|---|---|---|
+| Local dev | `docker-compose up --build -d` | Best for local testing with the bundled Redis fixture setup. Development only. | `### Run dev environment` |
+| Recommended SONiC deployment | Docker from GHCR | Best default for SONiC switches. Use the published image `ghcr.io/rokernel/sonic-exporter:v0.1.1`. | `### Docker deployment for SONiC` |
+| Offline SONiC deployment | Docker from GHCR, saved and loaded as a Docker tarball | Best when the switch cannot pull from GHCR directly. Pull the same release image, save it, copy it, then load it on the switch. | `### Docker deployment for SONiC` |
+| Secondary Linux deployment | Release tarball plus `systemd` | Use this on a regular Linux host, or for advanced manual installs. Example artifact: `sonic-exporter_0.1.1_linux_amd64.tar.gz`. | `## Binary tarball deployment with systemd` |
+
 ### Docker deployment for SONiC
 
 Optional collectors stay opt in. Keep `SYSTEM_ENABLED=false`, `DOCKER_ENABLED=false`, and `FRR_ENABLED=false` unless you need them.
 
-#### Build the Docker image
+#### Recommended online switch flow
 
-Use `scripts/build-image.sh` to build a local image and create an offline archive. Keep `IMAGE_TAG` immutable for each handoff so the tarball, checksum, and deployment notes all point to one exact build.
+For a SONiC switch with outbound access to GHCR, use the published image directly. This is the default and recommended deployment path.
 
-Use a real release or handoff tag. Do not use `latest`, and do not use a test-only name like `remote-smoke-*` for a deployed switch.
+Use a real release tag. Do not use `latest` in production.
 
-Good examples:
-
-- `v0.1.0`
-- `v0.1.0-f494c35`
-- `2026.05.28-f494c35`
-
-The date-plus-git-sha format is useful for offline handoffs because it is easy to trace back to the source commit.
+Pull the current release image on the switch:
 
 ```bash
-IMAGE_NAME=sonic-exporter \
-IMAGE_TAG=2026.05.28-f494c35 \
-OUTPUT_DIR=./build/docker \
-./scripts/build-image.sh
+sudo docker pull ghcr.io/rokernel/sonic-exporter:v0.1.1
+sudo docker image inspect ghcr.io/rokernel/sonic-exporter:v0.1.1 --format '{{.Id}}'
 ```
 
-This script builds the image, writes a tarball with `docker save`, and creates a SHA256 checksum file next to it.
+#### Offline Docker tarball handoff
 
-#### Smoke test the image
+If the switch cannot pull from GHCR, pull the same release image on a connected Linux host, save it to a tarball, copy it to the switch, then load it there.
 
-Run the local smoke test before handing the image to anyone else:
+On a connected Linux host:
 
 ```bash
-IMAGE_NAME=sonic-exporter \
-IMAGE_TAG=2026.05.28-f494c35 \
-./scripts/smoke-image.sh --port 19101
+docker pull ghcr.io/rokernel/sonic-exporter:v0.1.1
+docker save ghcr.io/rokernel/sonic-exporter:v0.1.1 -o sonic-exporter-v0.1.1.docker.tar
+sha256sum sonic-exporter-v0.1.1.docker.tar > sonic-exporter-v0.1.1.docker.tar.sha256
+scp sonic-exporter-v0.1.1.docker.tar sonic-exporter-v0.1.1.docker.tar.sha256 admin@192.0.2.10:/home/admin/
 ```
 
-`scripts/smoke-image.sh` starts the container, checks `/metrics`, and cleans up when it is done.
-
-#### Offline handoff
-
-For offline environments, hand off the image tarball, the `.sha256` file, and short run instructions together. The tarball comes from `docker save`, so another team can load it with Docker on the target side and verify the checksum before use.
-
-Example:
+On the SONiC switch:
 
 ```bash
-docker load -i build/docker/sonic-exporter-2026.05.28-f494c35-linux_amd64.docker.tar
-sha256sum -c build/docker/sonic-exporter-2026.05.28-f494c35-linux_amd64.docker.tar.sha256
+cd /home/admin
+sha256sum -c sonic-exporter-v0.1.1.docker.tar.sha256
+sudo docker load -i sonic-exporter-v0.1.1.docker.tar
+sudo docker image inspect ghcr.io/rokernel/sonic-exporter:v0.1.1 --format '{{.Id}}'
 ```
 
-If you loaded a test image tag during a canary, retag it before using it in a persistent service:
+`docker load` restores the same repository and tag metadata, so you can keep using `ghcr.io/rokernel/sonic-exporter:v0.1.1` in your run command or `systemd` unit.
 
-```bash
-sudo docker tag sonic-exporter:remote-smoke-20260528 sonic-exporter:2026.05.28-f494c35
-sudo docker image inspect sonic-exporter:2026.05.28-f494c35 --format '{{.Id}}'
-```
-
-Only retag images you built and tested. Do not use `remote-smoke-*` tags in the final `systemd` unit.
-
-The user's external Ansible repo should copy the tarball, load the image, and run the container later. Keep that deployment logic out of this repo.
+The external Ansible repo should handle copy, `docker load`, container creation, and later rollout steps. Keep that deployment logic out of this repo.
 
 #### Runtime environment variables
 
@@ -189,10 +180,11 @@ FRR_ENABLED=false
 Use host networking on SONiC so Redis at `127.0.0.1:6379` stays reachable from inside the container. This direct `docker run` example is useful for a manual canary test. For reboot persistence, use the `systemd` service in the next section instead.
 
 ```bash
-docker run -d \
+sudo docker run -d \
   --name sonic-exporter \
   --network host \
-  --restart unless-stopped \
+  --restart no \
+  --label app=sonic-exporter \
   -e REDIS_ADDRESS=127.0.0.1:6379 \
   -e REDIS_NETWORK=tcp \
   -e SONIC_DISABLED_METRICS= \
@@ -200,10 +192,12 @@ docker run -d \
   -e SYSTEM_ENABLED=false \
   -e DOCKER_ENABLED=false \
   -e FRR_ENABLED=false \
-  sonic-exporter:2026.05.28-f494c35
+  ghcr.io/rokernel/sonic-exporter:v0.1.1
 ```
 
-#### Reboot-persistent SONiC container
+Runtime labels such as `managed-by=systemd` are added by `docker run` or by the `ExecStart` line in the `systemd` unit. They are not built into the image.
+
+#### Reboot-persistent SONiC container with systemd
 
 SONiC starts its local containers through `systemd` services tied to `sonic.target`, such as `database.service`, `swss.service`, `pmon.service`, and `lldp.service`. For the exporter, use a dedicated `sonic-exporter.service` so `systemd` owns the container lifecycle after reboot.
 
@@ -227,7 +221,7 @@ Restart=always
 RestartSec=30
 ExecStartPre=/bin/sh -c 'until /usr/bin/redis-cli -h 127.0.0.1 -p 6379 ping | /bin/grep -q PONG; do sleep 2; done'
 ExecStartPre=-/usr/bin/docker rm -f sonic-exporter
-ExecStart=/usr/bin/docker run --name sonic-exporter --label app=sonic-exporter --label managed-by=systemd --restart no --network host -e REDIS_ADDRESS=127.0.0.1:6379 -e REDIS_NETWORK=tcp -e REDIS_PASSWORD= -e SONIC_DISABLED_METRICS= -e FDB_ENABLED=false -e SYSTEM_ENABLED=false -e DOCKER_ENABLED=false -e FRR_ENABLED=false sonic-exporter:2026.05.28-f494c35
+ExecStart=/usr/bin/docker run --name sonic-exporter --label app=sonic-exporter --label managed-by=systemd --restart no --network host -e REDIS_ADDRESS=127.0.0.1:6379 -e REDIS_NETWORK=tcp -e REDIS_PASSWORD= -e SONIC_DISABLED_METRICS= -e FDB_ENABLED=false -e SYSTEM_ENABLED=false -e DOCKER_ENABLED=false -e FRR_ENABLED=false ghcr.io/rokernel/sonic-exporter:v0.1.1
 ExecStop=-/usr/bin/docker stop sonic-exporter
 ExecStopPost=-/usr/bin/docker rm -f sonic-exporter
 
@@ -273,29 +267,23 @@ curl http://127.0.0.1:19101/metrics
 
 Replace `192.0.2.10` with the switch management address. Direct access to `http://<switch-mgmt-ip>:9101/metrics` may not work when the management interface is in the SONiC management VRF. SSH port forwarding avoids that problem without changing switch firewall or VRF settings.
 
-#### Upgrade the persistent container
+#### Upgrade the persistent SONiC container
 
-Build and test a new immutable image tag first. Do not reuse an old tag for a different image.
+Pull or load the new immutable release tag first. Do not reuse an old tag for a different image.
 
-Example new tag:
+If the switch can reach GHCR:
 
 ```bash
-IMAGE_NAME=sonic-exporter \
-IMAGE_TAG=2026.06.15-a1b2c3d \
-OUTPUT_DIR=./build/docker \
-./scripts/build-image.sh
-
-IMAGE_NAME=sonic-exporter \
-IMAGE_TAG=2026.06.15-a1b2c3d \
-./scripts/smoke-image.sh --port 19101
+sudo docker pull ghcr.io/rokernel/sonic-exporter:v0.1.2
+sudo docker image inspect ghcr.io/rokernel/sonic-exporter:v0.1.2 --format '{{.Id}}'
 ```
 
-Copy the new tarball and checksum to the switch, then load and verify it:
+If the switch is offline, repeat the offline switch flow with the new version, then verify the loaded image:
 
 ```bash
-sha256sum -c sonic-exporter-2026.06.15-a1b2c3d-linux_amd64.docker.tar.sha256
-sudo docker load -i sonic-exporter-2026.06.15-a1b2c3d-linux_amd64.docker.tar
-sudo docker image inspect sonic-exporter:2026.06.15-a1b2c3d --format '{{.Id}}'
+sha256sum -c sonic-exporter-v0.1.2.docker.tar.sha256
+sudo docker load -i sonic-exporter-v0.1.2.docker.tar
+sudo docker image inspect ghcr.io/rokernel/sonic-exporter:v0.1.2 --format '{{.Id}}'
 ```
 
 Update only the image tag in `/etc/systemd/system/sonic-exporter.service`, then restart only the exporter service:
@@ -324,7 +312,7 @@ Keep the previous image tag on the switch until the new one has been checked. Th
 Confirm the old image still exists:
 
 ```bash
-sudo docker image inspect sonic-exporter:2026.05.28-f494c35 --format '{{.Id}}'
+sudo docker image inspect ghcr.io/rokernel/sonic-exporter:v0.1.1 --format '{{.Id}}'
 ```
 
 Change `/etc/systemd/system/sonic-exporter.service` back to the previous image tag, then reload and restart only this service:
@@ -366,8 +354,8 @@ sudo docker rm -f sonic-exporter 2>/dev/null || true
 Optionally remove only known exporter image tags after you are sure they are no longer needed:
 
 ```bash
-sudo docker image rm sonic-exporter:2026.05.28-f494c35
-sudo docker image rm sonic-exporter:2026.06.15-a1b2c3d
+sudo docker image rm ghcr.io/rokernel/sonic-exporter:v0.1.1
+sudo docker image rm ghcr.io/rokernel/sonic-exporter:v0.1.2
 ```
 
 Do not use `docker system prune`, `docker container prune`, or broad `docker rm` commands on a SONiC switch. Those commands can affect SONiC containers that are unrelated to this exporter.
@@ -621,7 +609,7 @@ Notes:
 - `./scripts/build.sh` produces a static Linux binary (`CGO_ENABLED=0`).
 - If you add keys to Redis fixtures manually, persist them with `SAVE` in Redis.
 
-## Releases
+## Release artifacts and tags
 
 Releases are created from annotated Git tags. Create a tag in `vX.Y.Z` form, then push the tag to GitHub:
 
@@ -632,12 +620,16 @@ git push origin vX.Y.Z
 
 The release workflow runs on pushed tags, not on pull requests. When the tag is pushed, GitHub Actions runs GoReleaser and publishes these release artifacts:
 
-- Linux amd64 `.tar.gz` archive
+- Linux amd64 release tarball, for example `sonic-exporter_0.1.1_linux_amd64.tar.gz`
 - `checksums.txt`
 - SBOM JSON files for the archive artifacts
-- GHCR image `ghcr.io/rokernel/sonic-exporter:vX.Y.Z`
+- GHCR image `ghcr.io/rokernel/sonic-exporter:vX.Y.Z`, for example `ghcr.io/rokernel/sonic-exporter:v0.1.1`
 
 This repo does not publish `.deb` packages.
+
+The Linux release tarball and the GHCR image are different artifacts. `sonic-exporter_0.1.1_linux_amd64.tar.gz` contains the release binary for manual installs on Linux hosts. It is not the same thing as the container image `ghcr.io/rokernel/sonic-exporter:v0.1.1`, and it is also not the same thing as a Docker image tarball created with `docker save` for the offline SONiC Docker handoff.
+
+Use the published artifacts in the deployment path that fits your environment. For deployment steps, use the chooser near Quick Start.
 
 To verify downloaded release files:
 
@@ -653,9 +645,11 @@ gh attestation verify <artifact-file> --repo rokernel/sonic-exporter
 
 This release flow works on a free GitHub account for a public repo, as long as you stay within normal GitHub Actions, Releases, and GHCR limits.
 
-## Run the binary with systemd
+## Binary tarball deployment with systemd
 
-This section shows an example way to run the `sonic-exporter` binary as a Linux service using `systemd`, with collector toggles set by environment variables. For the Docker image on a SONiC switch, prefer the `sonic-exporter.service` container unit in the Docker deployment section above.
+This section shows an example way to run the released `sonic-exporter` binary as a Linux service using `systemd`, with collector toggles set by environment variables. This is the secondary deployment path for regular Linux hosts or advanced manual installs.
+
+Use the published release tarball for this path, for example `sonic-exporter_0.1.1_linux_amd64.tar.gz`. Download the tarball and `checksums.txt`, verify the download, then extract the tarball and install the `sonic-exporter` binary from it. For a SONiC switch, prefer the Docker from GHCR path in the SONiC deployment section above.
 
 Note: this `systemd` setup is not fully tested yet. Validate it in a lab or canary environment before using it in production.
 
@@ -667,7 +661,16 @@ sudo useradd --system --no-create-home --shell /usr/sbin/nologin sonic-exporter
 
 If your distro uses `/sbin/nologin`, use that path instead.
 
-### 2) Install the binary
+### 2) Verify and extract the binary tarball
+
+First download the release tarball and `checksums.txt` to the Linux host, verify them, then extract the tarball:
+
+```bash
+sha256sum -c checksums.txt
+tar -xzf sonic-exporter_0.1.1_linux_amd64.tar.gz
+```
+
+That tarball contains the release binary. It is not a Docker image and it cannot be imported as a container artifact.
 
 ```bash
 sudo install -m 0755 ./sonic-exporter /usr/local/bin/sonic-exporter
