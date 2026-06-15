@@ -23,7 +23,7 @@ FROM alpine:3.24
 ARG VERSION=unknown
 ARG REVISION=unknown
 ARG CREATED=unknown
-ARG SOURCE=https://github.com/rokernel/sonic-exporter
+ARG SOURCE=https://github.com/premday/sonic-exporter
 
 LABEL org.opencontainers.image.title="sonic-exporter" \
 	org.opencontainers.image.description="Prometheus exporter for SONiC switches" \

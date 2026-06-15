@@ -40,8 +40,8 @@ dockers:
     ids:
       - sonic-exporter
     image_templates:
-      - ghcr.io/rokernel/sonic-exporter:{{ .Tag }}
-      - '{{ if and (not .Prerelease) (not .IsNightly) (not .IsSnapshot) }}ghcr.io/rokernel/sonic-exporter:latest{{ end }}'
+      - ghcr.io/premday/sonic-exporter:{{ .Tag }}
+      - '{{ if and (not .Prerelease) (not .IsNightly) (not .IsSnapshot) }}ghcr.io/premday/sonic-exporter:latest{{ end }}'
     extra_files:
       - go.mod
       - go.sum
@@ -54,7 +54,7 @@ dockers:
       - --build-arg=VERSION={{ .Version }}
       - --build-arg=REVISION={{ .ShortCommit }}
       - --build-arg=CREATED={{ .Date }}
-      - --build-arg=SOURCE=https://github.com/rokernel/sonic-exporter
+      - --build-arg=SOURCE=https://github.com/premday/sonic-exporter
 
 sboms:
   - artifacts: archive
