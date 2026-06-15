@@ -93,7 +93,7 @@ For a deeper breakdown, see `docs/architecture.md`.
 
 Collector implementations live in `internal/collector/*_collector.go`.
 
-## Grafana dashboard
+## Grafana dashboard (experimental)
 
 The Grafana dashboard lives in `dashboards/sonic-exporter.json`. It is a single-switch drilldown dashboard for Grafana 10 and Grafana 11.
 
