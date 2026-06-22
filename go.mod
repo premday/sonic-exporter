@@ -8,7 +8,7 @@ require (
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
-	github.com/prometheus/common v0.68.1
+	github.com/prometheus/common v0.69.0
 	github.com/prometheus/exporter-toolkit v0.16.0
 	github.com/prometheus/node_exporter v1.11.1
 	github.com/redis/go-redis/v9 v9.20.1
