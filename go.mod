@@ -11,7 +11,7 @@ require (
 	github.com/prometheus/common v0.69.0
 	github.com/prometheus/exporter-toolkit v0.16.0
 	github.com/prometheus/node_exporter v1.11.1
-	github.com/redis/go-redis/v9 v9.20.1
+	github.com/redis/go-redis/v9 v9.21.0
 	github.com/tynany/frr_exporter v1.11.0
 )
 
