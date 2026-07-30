@@ -120,8 +120,8 @@ github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXl
 github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/tynany/frr_exporter v1.11.0 h1:6p0nEwnjoU/puiNOU2T3HG9f3zYmR5y6uqpyhY5c5TM=
-github.com/tynany/frr_exporter v1.11.0/go.mod h1:kb62jz211itubDm3i/j4zKXtFlViWsfpb50mRa7o3rs=
+github.com/tynany/frr_exporter v1.12.0 h1:Y4MEOo9Dn7cqHRM5eoBRvtEdobUeggZI77JS6+LF9/I=
+github.com/tynany/frr_exporter v1.12.0/go.mod h1:4TX1D5idi4RmuItDtRvYrUYMsyglKp1cucGQc1yIiQk=
 github.com/xhit/go-str2duration/v2 v2.1.0 h1:lxklc02Drh6ynqX+DdPyp5pCKLUQpRT8bp8Ydu2Bstc=
 github.com/xhit/go-str2duration/v2 v2.1.0/go.mod h1:ohY8p+0f07DiV6Em5LKB0s2YpLtXVyJfNt1+BlmyAsU=
 github.com/yuin/gopher-lua v1.1.1 h1:kYKnWBjvbNP4XLT3+bPEwAXJx262OhaHDWDVOPjL46M=
