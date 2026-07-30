@@ -121,7 +121,7 @@ For import, provisioning, variables, validation, smoke checks, and limits, see `
 ### Run locally
 
 ```bash
-./sonic-exporter
+./sonic-exporter --web.vrf=
 curl localhost:9101/metrics
 ```
 
@@ -133,6 +133,16 @@ curl localhost:9101/metrics
 ```
 
 `docker-compose.yaml` is for local development only. It starts a test Redis container and is not the production SONiC deployment pattern.
+
+### Web listener VRF
+
+The exporter supports Linux only. Its HTTP listener binds to the SONiC `mgmt` VRF by default:
+
+- `--web.vrf=mgmt` uses the default management VRF.
+- `--web.vrf=<name>` selects another VRF device.
+- `--web.vrf=` disables VRF binding for local development and regular Linux hosts.
+
+Startup fails if the selected VRF cannot be used. There is no fallback to the default routing table. This setting applies only to the HTTP listener. Redis and other collector sockets keep their existing behavior.
 
 ### Choose your path
 
@@ -146,6 +156,8 @@ curl localhost:9101/metrics
 ### Docker deployment for SONiC
 
 Optional collectors stay opt in. Keep `ROUTING_ENABLED=false`, `PLATFORM_HEALTH_ENABLED=false`, `SYSTEM_ENABLED=false`, `DOCKER_ENABLED=false`, and `FRR_ENABLED=false` unless you need them.
+
+The container must use host networking so it can see the host `mgmt` VRF device. The image runs as the non-root `sonic` user. Its binary carries `cap_net_raw=ep`, and the container runtime must retain `NET_RAW` in the capability bounding set. Do not use privileged mode.
 
 #### Recommended online switch flow
 
@@ -219,6 +231,8 @@ Use host networking on SONiC so Redis at `127.0.0.1:6379` stays reachable from i
 sudo docker run -d \
   --name sonic-exporter \
   --network host \
+  --cap-drop ALL \
+  --cap-add NET_RAW \
   --restart no \
   --label app=sonic-exporter \
   -e REDIS_ADDRESS=127.0.0.1:6379 \
@@ -234,6 +248,8 @@ sudo docker run -d \
 ```
 
 Runtime labels such as `managed-by=systemd` are added by `docker run` or by the `ExecStart` line in the `systemd` unit. They are not built into the image.
+
+The image has no embedded Docker `HEALTHCHECK`. A fixed check cannot follow a custom VRF selection safely. Use Prometheus or another external HTTP check for readiness. Container exit and the `systemd` restart policy provide liveness handling.
 
 #### Reboot-persistent SONiC container with systemd
 
@@ -259,7 +275,7 @@ Restart=always
 RestartSec=30
 ExecStartPre=/bin/sh -c 'until /usr/bin/redis-cli -h 127.0.0.1 -p 6379 ping | /bin/grep -q PONG; do sleep 2; done'
 ExecStartPre=-/usr/bin/docker rm -f sonic-exporter
-ExecStart=/usr/bin/docker run --name sonic-exporter --label app=sonic-exporter --label managed-by=systemd --restart no --network host -e REDIS_ADDRESS=127.0.0.1:6379 -e REDIS_NETWORK=tcp -e REDIS_PASSWORD= -e SONIC_DISABLED_METRICS= -e FDB_ENABLED=false -e ROUTING_ENABLED=false -e PLATFORM_HEALTH_ENABLED=false -e SYSTEM_ENABLED=false -e DOCKER_ENABLED=false -e FRR_ENABLED=false ghcr.io/premday/sonic-exporter:vX.Y.Z
+ExecStart=/usr/bin/docker run --name sonic-exporter --label app=sonic-exporter --label managed-by=systemd --restart no --network host --cap-drop ALL --cap-add NET_RAW -e REDIS_ADDRESS=127.0.0.1:6379 -e REDIS_NETWORK=tcp -e REDIS_PASSWORD= -e SONIC_DISABLED_METRICS= -e FDB_ENABLED=false -e ROUTING_ENABLED=false -e PLATFORM_HEALTH_ENABLED=false -e SYSTEM_ENABLED=false -e DOCKER_ENABLED=false -e FRR_ENABLED=false ghcr.io/premday/sonic-exporter:vX.Y.Z
 ExecStop=-/usr/bin/docker stop sonic-exporter
 ExecStopPost=-/usr/bin/docker rm -f sonic-exporter
 
@@ -288,13 +304,15 @@ The Docker restart policy should be `no` when `systemd` owns the container. That
 Validate the Redis-backed collectors on the switch:
 
 ```bash
-curl -fsS http://127.0.0.1:9101/metrics | grep -E 'sonic_.*collector_success|sonic_lldp_neighbors'
+curl -fsS http://192.0.2.10:9101/metrics | grep -E 'sonic_.*collector_success|sonic_lldp_neighbors'
 ```
+
+Replace `192.0.2.10` with the switch management address.
 
 If you can only reach the switch through SSH, use a tunnel from your workstation:
 
 ```bash
-ssh -N -L 19101:127.0.0.1:9101 192.0.2.10
+ssh -N -L 19101:192.0.2.10:9101 192.0.2.10
 ```
 
 Then scrape locally:
@@ -303,7 +321,7 @@ Then scrape locally:
 curl http://127.0.0.1:19101/metrics
 ```
 
-Replace `192.0.2.10` with the switch management address. Direct access to `http://<switch-mgmt-ip>:9101/metrics` may not work when the management interface is in the SONiC management VRF. SSH port forwarding avoids that problem without changing switch firewall or VRF settings.
+Replace both uses of `192.0.2.10` with the switch management address. The tunnel targets the VRF-bound management listener, not remote loopback.
 
 #### Upgrade the persistent SONiC container
 
@@ -344,8 +362,10 @@ Validate the new container:
 ```bash
 sudo docker inspect sonic-exporter \
   --format 'Image={{.Config.Image}} Status={{.State.Status}} Restart={{.HostConfig.RestartPolicy.Name}}'
-curl -fsS http://127.0.0.1:9101/metrics | grep -E 'sonic_.*collector_success|sonic_lldp_neighbors'
+curl -fsS http://192.0.2.10:9101/metrics | grep -E 'sonic_.*collector_success|sonic_lldp_neighbors'
 ```
+
+Replace `192.0.2.10` with the switch management address.
 
 Keep the previous image tag on the switch until the new one has been checked. That makes rollback simple.
 
@@ -423,6 +443,16 @@ Keep these mounts out unless the related optional collector is enabled.
 - If you want Debian 11 targets later, treat them as canary validation first. They are not documented here as already validated.
 
 ## Configuration
+
+### Web listener
+
+| Flag | Description | Default |
+|---|---|---|
+| `--web.listen-address` | TCP address used by the HTTP server | `:9101` |
+| `--web.telemetry-path` | Metrics endpoint path | `/metrics` |
+| `--web.vrf` | Linux VRF device for HTTP listeners; an empty value disables VRF binding | `mgmt` |
+
+VRF mode uses Linux `SO_BINDTODEVICE`. It cannot be combined with exporter-toolkit systemd socket activation or `vsock://` listeners. Use `--web.vrf=` for those modes.
 
 ### Core settings
 
@@ -687,10 +717,14 @@ Requirements:
 - Go 1.25 or newer
 
 ```bash
-go test ./...
+go test -race -shuffle=on -count=1 ./cmd/sonic-exporter
+go test -race -count=1 ./...
 go build ./...
 ./scripts/build.sh
 ./scripts/package.sh
+./scripts/validate-dashboard.sh dashboards/sonic-exporter.json
+./scripts/smoke-image.sh --dry-run
+./scripts/smoke-image.sh
 docker-compose up --build -d
 ```
 
@@ -812,7 +846,7 @@ User=sonic-exporter
 Group=sonic-exporter
 
 EnvironmentFile=/etc/sonic-exporter/sonic-exporter.env
-ExecStart=/usr/local/bin/sonic-exporter
+ExecStart=/usr/local/bin/sonic-exporter --web.vrf=
 Restart=on-failure
 RestartSec=5s
 
@@ -840,6 +874,18 @@ ReadOnlyPaths=/etc/sonic /host /proc
 [Install]
 WantedBy=multi-user.target
 ```
+
+This regular Linux example disables VRF binding and keeps the localhost readiness check below. To run the binary directly on a SONiC host with the default `mgmt` VRF, remove `--web.vrf=` and add only the required capability:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/sonic-exporter
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+```
+
+Treat this direct-binary SONiC setup as an advanced canary path. The Docker deployment above remains the recommended SONiC installation.
 
 ### 5) Enable and start
 
@@ -908,7 +954,7 @@ sudo systemd-analyze verify /etc/systemd/system/sonic-exporter.service
 Run a **canary** service on a different port:
 
 1. Copy unit to `sonic-exporter-canary.service`
-2. Change `ExecStart=/usr/local/bin/sonic-exporter --web.listen-address=:19101`
+2. Change `ExecStart=/usr/local/bin/sonic-exporter --web.vrf= --web.listen-address=:19101`
 3. Optionally use a canary env file
 4. Start only canary:
    ```bash
@@ -925,6 +971,8 @@ Run a **canary** service on a different port:
    sudo systemctl disable sonic-exporter-canary
    rm /etc/systemd/system/sonic-exporter-canary.service
    ```
+
+For a SONiC management-VRF canary, keep the default VRF instead, use `--web.listen-address=:19101`, retain `CAP_NET_RAW`, and verify `http://<switch-mgmt-ip>:19101/metrics` from the management network.
 
 ### Notes
 
