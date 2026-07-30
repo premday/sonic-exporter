@@ -32,6 +32,15 @@ flowchart TD
   - `NewLldpCollector`, `NewVlanCollector`, `NewLagCollector`, `NewFdbCollector`, `NewSystemCollector`, `NewDockerCollector`, `NewFrrCollector`.
 - The binary also registers a curated `node_exporter` subset (`loadavg`, `cpu`, `diskstats`, `filesystem`, `meminfo`, `time`, `stat`).
 
+### HTTP listener wiring
+
+- `cmd/sonic-exporter/main.go` registers `--web.vrf`, which defaults to `mgmt`.
+- `cmd/sonic-exporter/listener.go` creates the configured TCP listeners and passes them to exporter-toolkit `web.ServeMultiple`. Exporter-toolkit still owns TLS and basic authentication.
+- `cmd/sonic-exporter/listener_linux.go` uses `net.ListenConfig` and `SO_BINDTODEVICE` before each listener is opened.
+- `--web.vrf=<name>` selects another Linux VRF device. `--web.vrf=` skips custom listener creation and uses exporter-toolkit `web.ListenAndServe` directly.
+- Listener setup fails if the selected VRF cannot be used. It never falls back to the default routing table.
+- VRF binding applies only to HTTP listeners. Redis clients and collector sockets are not changed.
+
 ## Collector execution models
 
 This repo currently uses two cache patterns.
@@ -172,7 +181,7 @@ Use this workflow to match existing project style.
 
 ```text
 sonic-exporter/
-├── cmd/sonic-exporter/      # process bootstrap and collector registration
+├── cmd/sonic-exporter/      # process bootstrap, VRF listeners, and collector registration
 ├── internal/collector/      # collector implementations + tests
 ├── pkg/redis/               # Redis client wrapper used by collectors
 ├── fixtures/test/           # miniredis fixtures for tests
@@ -183,9 +192,15 @@ sonic-exporter/
 ## Build and test
 
 ```bash
-go test ./...
+go test -race -shuffle=on -count=1 ./cmd/sonic-exporter
+go test -race -count=1 ./...
 go build ./...
 ./scripts/build.sh
 ./scripts/package.sh
+./scripts/validate-dashboard.sh dashboards/sonic-exporter.json
+./scripts/smoke-image.sh --dry-run
+./scripts/smoke-image.sh
 docker-compose up --build -d
 ```
+
+The Docker smoke test and Compose disable VRF binding because local CI hosts do not provide a SONiC `mgmt` device. Production SONiC containers use host networking and retain only `NET_RAW` for the VRF-bound listener.
