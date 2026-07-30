@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/common/promslog/flag"
-	"github.com/prometheus/exporter-toolkit/web"
 	webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
 	nodecollector "github.com/prometheus/node_exporter/collector"
 	"github.com/vinted/sonic-exporter/internal/collector"
@@ -37,6 +37,7 @@ func main() {
 
 	var (
 		webConfig   = webflag.AddFlags(kp, ":9101")
+		webVRF      = addWebVRFFlag(kp)
 		metricsPath = kp.Flag("web.telemetry-path", "Path under which to expose metrics.").Default("/metrics").String()
 	)
 
@@ -140,7 +141,7 @@ func main() {
 		}
 	})
 	srv := &http.Server{}
-	if err := web.ListenAndServe(srv, webConfig, logger); err != nil {
+	if err := (webServer{server: srv, config: webConfig, logger: logger}).serve(context.Background(), *webVRF); err != nil {
 		logger.Error("Error starting HTTP server", "error", err)
 		os.Exit(1)
 	}
