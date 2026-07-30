@@ -91,7 +91,7 @@ done
 [[ -n "${IMAGE_REF}" ]] || die "image must not be empty"
 
 BUILD_SCRIPT="${REPO_ROOT}/scripts/build-image.sh"
-RUN_CMD=(docker run -d --name "${CONTAINER_NAME}" -p "${PORT}:9101" "${IMAGE_REF}")
+RUN_CMD=(docker run -d --name "${CONTAINER_NAME}" -p "${PORT}:9101" "${IMAGE_REF}" "./sonic-exporter" "--web.vrf=")
 CURL_CMD=(curl -fsS "http://127.0.0.1:${PORT}/metrics")
 LOGS_CMD=(docker logs "${CONTAINER_NAME}")
 RM_CMD=(docker rm -f "${CONTAINER_NAME}")
@@ -115,7 +115,7 @@ fi
 
 METRICS_FILE="$(mktemp)"
 
-if ! docker run -d --name "${CONTAINER_NAME}" -p "${PORT}:9101" "${IMAGE_REF}" >/dev/null; then
+if ! "${RUN_CMD[@]}" >/dev/null; then
     print_failure_logs
     exit 1
 fi

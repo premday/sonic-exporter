@@ -13,7 +13,7 @@ RUN go mod download
 
 # Build
 COPY . /code
-RUN go build -trimpath -ldflags="-s -w" -o sonic-exporter ./cmd/sonic-exporter/main.go
+RUN go build -trimpath -ldflags="-s -w" -o sonic-exporter ./cmd/sonic-exporter
 
 # ===========
 # Final stage
@@ -33,15 +33,14 @@ LABEL org.opencontainers.image.title="sonic-exporter" \
 	org.opencontainers.image.source="${SOURCE}"
 
 WORKDIR /app
-RUN apk --no-cache add ca-certificates curl \
+COPY --from=builder /code/sonic-exporter ./sonic-exporter
+RUN apk --no-cache add libcap \
+	&& setcap cap_net_raw=ep /app/sonic-exporter \
+	&& apk del libcap \
 	&& addgroup -S sonic \
 	&& adduser -S -G sonic sonic
 
-COPY --from=builder /code/sonic-exporter ./sonic-exporter
-
 EXPOSE 9101
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD curl -fsS http://127.0.0.1:9101/metrics >/dev/null || exit 1
 
 USER sonic
 
