@@ -225,16 +225,30 @@ FRR_ENABLED=false
 
 #### Example docker run for a manual canary
 
-Use host networking on SONiC so Redis at `127.0.0.1:6379` stays reachable from inside the container. This direct `docker run` example is useful for a manual canary test. For reboot persistence, use the `systemd` service in the next section instead.
+Use host networking on SONiC so Redis at `127.0.0.1:6379` stays reachable from inside the container. This is a disposable canary only. It uses its own name and port, and it must not stop, replace, or modify an existing `sonic-exporter` container or service. For reboot persistence, use the `systemd` service in the next section instead.
+
+`--pid=host` makes `/proc/1/mountinfo` visible from the host PID namespace. The filesystem collector gets mount names and the readonly metric from those mountinfo options. `--path.rootfs=/hostfs` prefixes the paths passed to `statfs`, so capacity and inode values come from the host root mounted at `/hostfs`. The `rslave` propagation mode carries host mount changes into the container. The root bind is read-only, so it exposes readable host metadata without granting write access.
 
 ```bash
+CANARY_SUFFIX=$(date +%s)
+CANARY_NAME="sonic-exporter-hostfs-canary-${CANARY_SUFFIX}"
+CANARY_PORT=$((19000 + CANARY_SUFFIX % 1000))
+SWITCH_MGMT_ADDRESS=192.0.2.10
+
+if sudo ss -ltn "sport = :${CANARY_PORT}" | grep -q LISTEN; then
+  echo "canary port ${CANARY_PORT} is already in use" >&2
+  exit 1
+fi
+
 sudo docker run -d \
-  --name sonic-exporter \
+  --name "${CANARY_NAME}" \
   --network host \
+  --pid=host \
+  --volume /:/hostfs:ro,rslave \
   --cap-drop ALL \
   --cap-add NET_RAW \
   --restart no \
-  --label app=sonic-exporter \
+  --label app=sonic-exporter-hostfs-canary \
   -e REDIS_ADDRESS=127.0.0.1:6379 \
   -e REDIS_NETWORK=tcp \
   -e SONIC_DISABLED_METRICS= \
@@ -244,7 +258,53 @@ sudo docker run -d \
   -e SYSTEM_ENABLED=false \
   -e DOCKER_ENABLED=false \
   -e FRR_ENABLED=false \
-  ghcr.io/premday/sonic-exporter:vX.Y.Z
+  ghcr.io/premday/sonic-exporter:vX.Y.Z \
+  ./sonic-exporter \
+  --web.listen-address=":${CANARY_PORT}" \
+  --path.rootfs=/hostfs
+```
+
+Validate the canary before removing it. Discover the SONiC `/host` mount at runtime, then confirm the filesystem collector succeeds and exports matching size, device, and readonly state for `/host`. Do not substitute the local container root for this check:
+
+```bash
+findmnt -no SOURCE,FSTYPE,OPTIONS /host
+HOST_DEVICE=$(findmnt -no SOURCE /host)
+HOST_FSTYPE=$(findmnt -no FSTYPE /host)
+HOST_OPTIONS=$(findmnt -no OPTIONS /host)
+HOST_SIZE_BYTES=$(($(stat -f -c '%S' /host) * $(stat -f -c '%b' /host)))
+case ",${HOST_OPTIONS}," in
+  *,ro,*) HOST_READONLY=1 ;;
+  *) HOST_READONLY=0 ;;
+esac
+
+METRICS_URL="http://${SWITCH_MGMT_ADDRESS}:${CANARY_PORT}/metrics"
+
+select_host_metric() {
+  curl -fsS "${METRICS_URL}" | awk -v metric_name="$1" -v device="${HOST_DEVICE}" -v fstype="${HOST_FSTYPE}" '
+    index($0, metric_name "{") == 1 &&
+    index($0, "device=\"" device "\"") &&
+    index($0, "fstype=\"" fstype "\"") &&
+    index($0, "mountpoint=\"/host\"") { print }
+  '
+}
+
+curl -fsS "${METRICS_URL}" | grep -qx 'node_scrape_collector_success{collector="filesystem"} 1' &&
+HOST_SIZE_METRIC=$(select_host_metric node_filesystem_size_bytes) &&
+test "$(printf '%s\n' "${HOST_SIZE_METRIC}" | grep -c .)" -eq 1 &&
+awk -v metric_value="${HOST_SIZE_METRIC##* }" -v host_size="${HOST_SIZE_BYTES}" 'BEGIN { exit !(metric_value + 0 == host_size + 0) }' &&
+HOST_READONLY_METRIC=$(select_host_metric node_filesystem_readonly) &&
+test "$(printf '%s\n' "${HOST_READONLY_METRIC}" | grep -c .)" -eq 1 &&
+test "${HOST_READONLY_METRIC##* }" = "${HOST_READONLY}" &&
+if curl -fsS "${METRICS_URL}" | grep -q 'mountpoint="/hostfs'; then
+  echo "hostfs path leaked into a metric label" >&2
+  exit 1
+fi
+```
+
+Roll back the canary by removing only its unique container. This does not touch the existing exporter:
+
+```bash
+sudo docker rm -f "${CANARY_NAME}"
 ```
 
 Runtime labels such as `managed-by=systemd` are added by `docker run` or by the `ExecStart` line in the `systemd` unit. They are not built into the image.
@@ -275,7 +335,7 @@ Restart=always
 RestartSec=30
 ExecStartPre=/bin/sh -c 'until /usr/bin/redis-cli -h 127.0.0.1 -p 6379 ping | /bin/grep -q PONG; do sleep 2; done'
 ExecStartPre=-/usr/bin/docker rm -f sonic-exporter
-ExecStart=/usr/bin/docker run --name sonic-exporter --label app=sonic-exporter --label managed-by=systemd --restart no --network host --cap-drop ALL --cap-add NET_RAW -e REDIS_ADDRESS=127.0.0.1:6379 -e REDIS_NETWORK=tcp -e REDIS_PASSWORD= -e SONIC_DISABLED_METRICS= -e FDB_ENABLED=false -e ROUTING_ENABLED=false -e PLATFORM_HEALTH_ENABLED=false -e SYSTEM_ENABLED=false -e DOCKER_ENABLED=false -e FRR_ENABLED=false ghcr.io/premday/sonic-exporter:vX.Y.Z
+ExecStart=/usr/bin/docker run --name sonic-exporter --label app=sonic-exporter --label managed-by=systemd --restart no --network host --pid=host --volume /:/hostfs:ro,rslave --cap-drop ALL --cap-add NET_RAW -e REDIS_ADDRESS=127.0.0.1:6379 -e REDIS_NETWORK=tcp -e REDIS_PASSWORD= -e SONIC_DISABLED_METRICS= -e FDB_ENABLED=false -e ROUTING_ENABLED=false -e PLATFORM_HEALTH_ENABLED=false -e SYSTEM_ENABLED=false -e DOCKER_ENABLED=false -e FRR_ENABLED=false ghcr.io/premday/sonic-exporter:vX.Y.Z ./sonic-exporter --path.rootfs=/hostfs
 ExecStop=-/usr/bin/docker stop sonic-exporter
 ExecStopPost=-/usr/bin/docker rm -f sonic-exporter
 
@@ -300,6 +360,8 @@ sudo docker inspect sonic-exporter \
 ```
 
 The Docker restart policy should be `no` when `systemd` owns the container. That keeps one restart owner instead of having both Docker and `systemd` restart the same container.
+
+The Docker-managed service uses the same host filesystem setup as the manual canary. Host PID mode exposes the host's `/proc/1/mountinfo`, including mount options that produce `node_filesystem_readonly`. The rootfs flag prefixes each filesystem `statfs` path with `/hostfs`. Keep the root bind read-only and `rslave` so host mounts remain visible as they appear. Do not add privileged mode, `CAP_SYS_ADMIN`, a writable root bind, or Docker socket access.
 
 Validate the Redis-backed collectors on the switch:
 
@@ -429,7 +491,7 @@ Do not mount /var/run/docker.sock. The Docker collector reads SONiC `STATE_DB` d
 If you enable optional collectors later, add only the read-only mounts they need:
 
 - `/etc/sonic:/etc/sonic:ro` for System collector version files
-- `/host:/host:ro` for System collector machine data
+- `/host:/host:ro` only when the System collector needs machine data
 - `/proc:/proc:ro` for System collector uptime
 - `/var/run/frr:/var/run/frr:ro` for FRR socket access
 
@@ -462,6 +524,14 @@ VRF mode uses Linux `SO_BINDTODEVICE`. It cannot be combined with exporter-toolk
 | `REDIS_PASSWORD` | Password for Redis | empty |
 | `REDIS_NETWORK` | Redis network type (`tcp` or `unix`) | `tcp` |
 | `SONIC_DISABLED_METRICS` | Comma-separated full metric names or wildcard patterns to suppress for in-repo SONiC collectors only | empty |
+
+### Host filesystem path
+
+| Flag | Description | Default |
+|---|---|---|
+| `--path.rootfs` | Host root filesystem prefix used by the embedded filesystem collector | `/` |
+
+For direct binary deployments, keep the default `/`. Only containers that bind the host root at `/hostfs` should pass `--path.rootfs=/hostfs`.
 
 ### Source-side metric disabling
 
