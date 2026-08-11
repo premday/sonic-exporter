@@ -16,22 +16,25 @@ import (
 	"github.com/vinted/sonic-exporter/internal/collector"
 )
 
-func main() {
-	// setup node exporter collectors through global kingpin flags
-	_, err := kingpin.CommandLine.Parse([]string{
-		"--collector.loadavg",
-		"--collector.cpu",
-		"--collector.diskstats",
-		"--collector.filesystem",
-		"--collector.meminfo",
-		"--collector.time",
-		"--collector.stat",
-	})
-	if err != nil {
-		slog.Error("failed to parse node exporter collector defaults", "error", err)
-		os.Exit(1)
-	}
+var nodeCollectorNames = [...]string{
+	"loadavg",
+	"cpu",
+	"diskstats",
+	"filesystem",
+	"meminfo",
+	"time",
+	"stat",
+}
 
+func nodeCollectorArgs(rootfs string) []string {
+	arguments := make([]string, 0, len(nodeCollectorNames)+1)
+	for _, collectorName := range nodeCollectorNames {
+		arguments = append(arguments, "--collector."+collectorName)
+	}
+	return append(arguments, "--path.rootfs="+rootfs)
+}
+
+func main() {
 	// New kingpin instance to prevent imported code from adding flags (node exporter)
 	kp := kingpin.New("sonic-exporter", "Prometheus exporter for SONiC network switches")
 
@@ -39,14 +42,19 @@ func main() {
 		webConfig   = webflag.AddFlags(kp, ":9101")
 		webVRF      = addWebVRFFlag(kp)
 		metricsPath = kp.Flag("web.telemetry-path", "Path under which to expose metrics.").Default("/metrics").String()
+		rootfs      = kp.Flag("path.rootfs", "Root filesystem mountpoint for embedded node_exporter.").Default("/").String()
 	)
 
 	promslogConfig := &promslog.Config{}
 	flag.AddFlags(kp, promslogConfig)
 	kp.HelpFlag.Short('h')
 	kp.UsageWriter(os.Stdout)
-	if _, err = kp.Parse(os.Args[1:]); err != nil {
+	if _, err := kp.Parse(os.Args[1:]); err != nil {
 		slog.Error("failed to parse command line arguments", "error", err)
+		os.Exit(1)
+	}
+	if _, err := kingpin.CommandLine.Parse(nodeCollectorArgs(*rootfs)); err != nil {
+		slog.Error("failed to parse node exporter collector defaults", "error", err)
 		os.Exit(1)
 	}
 
@@ -112,15 +120,7 @@ func main() {
 	}
 
 	// Node exporter collectors
-	nodeCollector, err := nodecollector.NewNodeCollector(logger,
-		"loadavg",
-		"cpu",
-		"diskstats",
-		"filesystem",
-		"meminfo",
-		"time",
-		"stat",
-	)
+	nodeCollector, err := nodecollector.NewNodeCollector(logger, nodeCollectorNames[:]...)
 	if err != nil {
 		logger.Error("Failed to create node collector", "error", err)
 		os.Exit(1)
