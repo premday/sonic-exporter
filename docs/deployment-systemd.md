@@ -12,8 +12,8 @@ This is an advanced direct-binary installation for a SONiC Community OS switch. 
 - [Create a protected environment file](#create-a-protected-environment-file)
 - [Install the systemd unit](#install-the-systemd-unit)
 - [Start and validate](#start-and-validate)
-- [Run a parallel canary](#run-a-parallel-canary)
 - [Update or roll back](#update-or-roll-back)
+- [Optional: test with a parallel canary](#optional-test-with-a-parallel-canary)
 
 ## Before you begin
 
@@ -31,14 +31,19 @@ Use `/sbin/nologin` instead when that is the valid path on the switch.
 
 ## Verify and install the binary
 
-Download the release archive and `checksums.txt` from the same GitHub release, then verify before extraction:
+Download the release archive and `checksums.txt` from the same GitHub release, then verify the archive before extraction. The checksum file also lists the release SBOM, so select the archive entry when the SBOM was not downloaded:
 
 ```bash
 VERSION=X.Y.Z
+ARCHIVE="sonic-exporter_${VERSION}_linux_amd64.tar.gz"
 
-sha256sum -c checksums.txt
-tar -xzf sonic-exporter_${VERSION}_linux_amd64.tar.gz
-sudo install -m 0755 ./sonic-exporter /usr/local/bin/sonic-exporter
+awk -v archive="${ARCHIVE}" \
+  '$2 == archive {line = $0; matches++} END {if (matches != 1) exit 1; print line}' \
+  checksums.txt \
+  | sha256sum -c - \
+  && rm -f ./sonic-exporter \
+  && tar -xzf "${ARCHIVE}" \
+  && sudo install -m 0755 ./sonic-exporter /usr/local/bin/sonic-exporter
 ```
 
 Confirm the binary starts and display the available flags:
@@ -167,17 +172,65 @@ Useful metric prefixes include:
 
 If the service is running but a collector reports failure, use the [troubleshooting guide](troubleshooting.md) before weakening the unit hardening.
 
-The direct-binary path sees the switch root at `/`, so keep the default `--path.rootfs=/`. It retains the default `mgmt` VRF listener, which is why the unit includes `CAP_NET_RAW`. Treat it as an advanced canary path; the container deployment remains the recommended SONiC Community OS installation.
+The direct-binary path sees the switch root at `/`, so keep the default `--path.rootfs=/`. It retains the default `mgmt` VRF listener, which is why the unit includes `CAP_NET_RAW`. Treat it as an advanced installation; the container deployment remains the recommended SONiC Community OS installation.
 
-## Run a parallel canary
+The `v0.4.0` direct binary was validated on three SONiC 202605 lab switches using both the default `mgmt` VRF listener and explicit non-VRF mode with `--web.vrf=`.
 
-A canary must use a different unit name, port, and binary path. Install the candidate binary separately, then copy the unit:
+## Update or roll back
+
+Download the replacement archive and `checksums.txt` into a clean working directory. Then verify, extract, and install the replacement as one failure-gated sequence. Keep the current binary until the replacement has passed validation:
 
 ```bash
-sudo install -m 0755 ./sonic-exporter /usr/local/bin/sonic-exporter-canary
-sudo cp /etc/systemd/system/sonic-exporter.service \
-  /etc/systemd/system/sonic-exporter-canary.service
-sudoedit /etc/systemd/system/sonic-exporter-canary.service
+VERSION=X.Y.Z
+ARCHIVE="sonic-exporter_${VERSION}_linux_amd64.tar.gz"
+
+sudo cp /usr/local/bin/sonic-exporter \
+  /usr/local/bin/sonic-exporter.previous \
+  && rm -f ./sonic-exporter \
+  && awk -v archive="${ARCHIVE}" \
+    '$2 == archive {line = $0; matches++} END {if (matches != 1) exit 1; print line}' \
+    checksums.txt \
+  | sha256sum -c - \
+  && tar -xzf "${ARCHIVE}" \
+  && sudo install -m 0755 ./sonic-exporter /usr/local/bin/sonic-exporter.new \
+  && sudo mv /usr/local/bin/sonic-exporter.new /usr/local/bin/sonic-exporter \
+  && sudo systemctl restart sonic-exporter.service \
+  && sudo systemctl status sonic-exporter.service --no-pager
+```
+
+Rollback is the same atomic replacement in reverse:
+
+```bash
+sudo install -m 0755 /usr/local/bin/sonic-exporter.previous \
+  /usr/local/bin/sonic-exporter.new \
+  && sudo mv /usr/local/bin/sonic-exporter.new /usr/local/bin/sonic-exporter \
+  && sudo systemctl restart sonic-exporter.service
+```
+
+After an update or rollback, repeat the service-state, endpoint, and collector checks in [Start and validate](#start-and-validate). If filesystem metrics are important to the rollout, also run the [host-filesystem checks](troubleshooting.md#filesystem-metrics-describe-the-container-instead-of-the-switch).
+
+Change collector settings in `/etc/sonic-exporter/sonic-exporter.env`, then restart the service. For local unit customization, use `systemctl edit` rather than modifying a package-managed unit directly.
+
+## Optional: test with a parallel canary
+
+A canary is a second temporary exporter used to test a new binary without stopping the existing service. New installations and normal updates do not require this procedure.
+
+The canary must use a different unit name, port, and binary path. Download the candidate archive and `checksums.txt` into a clean working directory, then verify, extract, and install it as one failure-gated sequence before copying the unit:
+
+```bash
+VERSION=X.Y.Z
+ARCHIVE="sonic-exporter_${VERSION}_linux_amd64.tar.gz"
+
+rm -f ./sonic-exporter \
+  && awk -v archive="${ARCHIVE}" \
+    '$2 == archive {line = $0; matches++} END {if (matches != 1) exit 1; print line}' \
+    checksums.txt \
+  | sha256sum -c - \
+  && tar -xzf "${ARCHIVE}" \
+  && sudo install -m 0755 ./sonic-exporter /usr/local/bin/sonic-exporter-canary \
+  && sudo cp /etc/systemd/system/sonic-exporter.service \
+    /etc/systemd/system/sonic-exporter-canary.service \
+  && sudoedit /etc/systemd/system/sonic-exporter-canary.service
 ```
 
 Change at least these fields:
@@ -202,37 +255,33 @@ curl -fsS http://192.0.2.10:19101/metrics >/dev/null && echo OK
 sudo journalctl -u sonic-exporter-canary.service -n 100 --no-pager
 ```
 
-Remove it without touching the production service:
-
-```bash
-sudo systemctl disable --now sonic-exporter-canary.service 2>/dev/null || true
-sudo rm -f /etc/systemd/system/sonic-exporter-canary.service
-sudo rm -f /usr/local/bin/sonic-exporter-canary
-sudo systemctl daemon-reload
-```
-
 For a management-VRF canary on SONiC, keep VRF binding enabled, retain `CAP_NET_RAW`, and verify `http://<switch-management-address>:19101/metrics`.
 
-## Update or roll back
+To test listener operation without VRF binding, use a separate canary port and set `--web.vrf=` explicitly:
 
-Keep the previous binary until the replacement has passed validation:
-
-```bash
-sudo cp /usr/local/bin/sonic-exporter \
-  /usr/local/bin/sonic-exporter.previous
-sudo install -m 0755 ./sonic-exporter /usr/local/bin/sonic-exporter.new
-sudo mv /usr/local/bin/sonic-exporter.new /usr/local/bin/sonic-exporter
-sudo systemctl restart sonic-exporter.service
-sudo systemctl status sonic-exporter.service --no-pager
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/sonic-exporter-canary --web.listen-address=127.0.0.1:19102 --web.vrf=
+AmbientCapabilities=
+CapabilityBoundingSet=
 ```
 
-Rollback is the same atomic replacement in reverse:
+After reloading and restarting the canary, test this mode through the default routing table. Loopback is a simple local check:
 
 ```bash
-sudo install -m 0755 /usr/local/bin/sonic-exporter.previous \
-  /usr/local/bin/sonic-exporter.new
-sudo mv /usr/local/bin/sonic-exporter.new /usr/local/bin/sonic-exporter
-sudo systemctl restart sonic-exporter.service
+sudo systemctl daemon-reload
+sudo systemctl restart sonic-exporter-canary.service
+curl -fsS http://127.0.0.1:19102/metrics >/dev/null && echo OK
 ```
 
-Change collector settings in `/etc/sonic-exporter/sonic-exporter.env`, then restart the service. For local unit customization, use `systemctl edit` rather than modifying a package-managed unit directly.
+Non-VRF mode can work locally even when remote management access requires the `mgmt` VRF. Test the management-VRF and non-VRF modes on separate ports so listener reachability is not confused with collector behavior.
+
+Remove the canary after both listener tests without touching the production service:
+
+```bash
+sudo systemctl stop sonic-exporter-canary.service \
+  && sudo rm -f /etc/systemd/system/sonic-exporter-canary.service \
+  && sudo rm -f /usr/local/bin/sonic-exporter-canary \
+  && sudo systemctl daemon-reload
+```

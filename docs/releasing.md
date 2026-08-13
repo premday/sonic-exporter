@@ -51,10 +51,16 @@ They are not interchangeable.
 
 ## Verify a release
 
-Download the archive and `checksums.txt` from the same release, then run:
+Download the archive and `checksums.txt` from the same release. The checksum file also lists the release SBOM, so select the archive entry when the SBOM was not downloaded:
 
 ```bash
-sha256sum -c checksums.txt
+VERSION=X.Y.Z
+ARCHIVE="sonic-exporter_${VERSION}_linux_amd64.tar.gz"
+
+awk -v archive="${ARCHIVE}" \
+  '$2 == archive {line = $0; matches++} END {if (matches != 1) exit 1; print line}' \
+  checksums.txt \
+  | sha256sum -c -
 ```
 
 When GitHub attestations are present:
@@ -91,7 +97,7 @@ A manually maintained `CHANGELOG.md` should be added only if the project commits
 
 ## Rollout
 
-Use the release tag in a parallel canary before editing the persistent service. Keep the previous image or binary available until the new version passes endpoint, collector-health, and host-filesystem checks.
+Optionally, test the release tag in a parallel canary before editing the persistent service. For a normal update, keep the previous image or binary available until the new version passes endpoint, collector-health, and host-filesystem checks.
 
 - [Docker deployment and rollback](deployment-docker-sonic.md)
 - [Binary deployment and rollback](deployment-systemd.md)
