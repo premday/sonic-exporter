@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 512 512"
+   role="img"
+   aria-labelledby="title desc"
+   version="1.1"
+   id="svg7"
+   sodipodi:docname="sonic-exporter-favicon-source.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview7"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1" />
+  <title
+     id="title">sonic-exporter favicon</title>
+  <desc
+     id="desc">A simplified sonic-exporter S and telemetry mark for very small sizes.</desc>
+  <defs
+     id="defs4">
+    <linearGradient
+       id="fav-gradient"
+       x1="0"
+       y1="0"
+       x2="0"
+       y2="1">
+      <stop
+         offset="0%"
+         stop-color="#00BCD4"
+         id="stop1" />
+      <stop
+         offset="48%"
+         stop-color="#00BCD4"
+         id="stop2" />
+      <stop
+         offset="58%"
+         stop-color="#FFFFFF"
+         id="stop3" />
+      <stop
+         offset="100%"
+         stop-color="#FFFFFF"
+         id="stop4" />
+    </linearGradient>
+  </defs>
+  <rect
+     width="512"
+     height="512"
+     rx="96"
+     fill="#071622"
+     id="rect4" />
+  <path
+     d="M101 246 V151 Q101 136 114 128 L246 52 Q256 46 266 52 L398 128 Q411 136 411 151 V207"
+     fill="none"
+     stroke="#00BCD4"
+     stroke-width="24"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     id="path4" />
+  <path
+     d="M411 305 V361 Q411 376 398 384 L266 460 Q256 466 246 460 L114 384 Q101 376 101 361 V305"
+     fill="none"
+     stroke="#FFFFFF"
+     stroke-width="24"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     id="path5" />
+  <path
+     d="M341 132 H213 C166 132 142 154 142 185 C142 216 166 235 210 235 H301 C345 235 370 257 370 291 C370 325 345 347 301 347 H177"
+     fill="none"
+     stroke="url(#fav-gradient)"
+     stroke-width="62"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     id="path6" />
+  <path
+     d="M103 252 H333 L347 252 L361 219 L379 286 L395 235 L410 252 H445"
+     fill="none"
+     stroke="#00BCD4"
+     stroke-width="15"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     id="path7" />
+  <circle
+     cx="461"
+     cy="252"
+     r="18"
+     fill="#FF8A1E"
+     id="circle7" />
+</svg>
