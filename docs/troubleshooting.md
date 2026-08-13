@@ -14,7 +14,7 @@ sudo docker inspect sonic-exporter --format \
   'Image={{.Config.Image}} Network={{.HostConfig.NetworkMode}} PID={{.HostConfig.PidMode}} Restart={{.HostConfig.RestartPolicy.Name}} CapAdd={{json .HostConfig.CapAdd}} CapDrop={{json .HostConfig.CapDrop}} Binds={{json .HostConfig.Binds}}'
 ```
 
-For a direct binary service:
+For an advanced direct-binary SONiC Community OS service:
 
 ```bash
 sudo systemctl status sonic-exporter.service --no-pager
@@ -58,22 +58,6 @@ curl -fsS http://127.0.0.1:19101/metrics | head
 ```
 
 The tunnel target must be the switch management address because the exporter is bound to that VRF, not remote `127.0.0.1`.
-
-### On a regular Linux host
-
-A regular host normally has no `mgmt` device. Start the exporter with an empty VRF value:
-
-```bash
-./sonic-exporter --web.vrf=
-```
-
-For `systemd`, confirm the unit contains:
-
-```ini
-ExecStart=/usr/local/bin/sonic-exporter --web.vrf=
-```
-
-An error similar to “no such device” during listener startup usually means VRF binding was left enabled on a host without that device.
 
 ## The listener reports a permission error
 
@@ -120,7 +104,6 @@ Check these common causes:
 - `REDIS_ADDRESS` does not match the deployment topology.
 - A Docker container is not using host networking, so `127.0.0.1` points to the container instead of SONiC Redis.
 - Redis requires a password that is missing or incorrect.
-- A remote Linux deployment cannot route to the switch Redis service.
 - A collector timeout is too low for the platform or dataset size.
 
 Keep timeouts bounded. Increase them only after confirming the source is healthy and the operation is expected to take longer.
@@ -184,7 +167,7 @@ if curl -fsS http://192.0.2.10:9101/metrics \
 fi
 ```
 
-For a specific host mount such as `/host`, compare the host source, type, size, and read-only state with the exported series:
+For a specific switch mount such as `/host`, compare the source, type, size, and read-only state with the exported series:
 
 ```bash
 findmnt -no SOURCE,FSTYPE,OPTIONS /host

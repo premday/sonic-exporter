@@ -31,23 +31,23 @@ flowchart TD
 - Configurable collectors are gated by `IsEnabled()` before registration:
   - enabled by default: `NewLldpCollector`, `NewVlanCollector`, `NewLagCollector`, `NewSwitchCollector`, `NewThermalCollector`, `NewTransceiverCollector`;
   - disabled by default: `NewFdbCollector`, `NewRoutingCollector`, `NewPlatformHealthCollector`, `NewSystemCollector`, `NewDockerCollector`, `NewFrrCollector`.
-- The binary also registers a curated `node_exporter` subset (`loadavg`, `cpu`, `diskstats`, `filesystem`, `meminfo`, `time`, `stat`).
+- The binary also registers a curated `node_exporter` subset for switch system metrics (`loadavg`, `cpu`, `diskstats`, `filesystem`, `meminfo`, `time`, `stat`).
 
 ### HTTP listener wiring
 
 - `cmd/sonic-exporter/main.go` registers `--web.vrf`, which defaults to `mgmt`.
 - `cmd/sonic-exporter/listener.go` creates the configured TCP listeners and passes them to exporter-toolkit `web.ServeMultiple`. Exporter-toolkit still owns TLS and basic authentication.
 - `cmd/sonic-exporter/listener_linux.go` uses `net.ListenConfig` and `SO_BINDTODEVICE` before each listener is opened.
-- `--web.vrf=<name>` selects another Linux VRF device. `--web.vrf=` skips custom listener creation and uses exporter-toolkit `web.ListenAndServe` directly.
+- `--web.vrf=<name>` selects another VRF device. `--web.vrf=` skips custom listener creation and uses exporter-toolkit `web.ListenAndServe` directly.
 - Listener setup fails if the selected VRF cannot be used. It never falls back to the default routing table.
 - VRF binding applies only to HTTP listeners. Redis clients and collector sockets are not changed.
 
 ### Host filesystem wiring
 
 - `cmd/sonic-exporter/main.go` registers `--path.rootfs`, which defaults to `/`.
-- A direct binary uses the host root directly and should keep that default.
+- A direct binary uses the switch root directly and should keep that default.
 - The recommended SONiC container binds the host root at `/hostfs`, passes `--path.rootfs=/hostfs`, and uses host PID mode.
-- Host PID mode exposes the host `/proc/1/mountinfo`, including mount options used by `node_filesystem_readonly`.
+- Host PID mode exposes the switch `/proc/1/mountinfo`, including mount options used by `node_filesystem_readonly`.
 - The rootfs prefix is applied only to filesystem system calls; `/hostfs` must not leak into exported mountpoint labels.
 - The root bind is read-only with `rslave` propagation so host mount changes remain visible without granting write access.
 

@@ -33,10 +33,10 @@ GoReleaser currently publishes Linux/amd64 artifacts:
 
 | Artifact | Purpose |
 |---|---|
-| `sonic-exporter_X.Y.Z_linux_amd64.tar.gz` | Standalone binary deployment |
+| `sonic-exporter_X.Y.Z_linux_amd64.tar.gz` | Advanced standalone binary deployment on SONiC Community OS |
 | `checksums.txt` | SHA-256 verification for release files |
 | SBOM JSON files | Software-bill-of-materials data for release archives |
-| `ghcr.io/premday/sonic-exporter:vX.Y.Z` | Docker deployment on SONiC |
+| `ghcr.io/premday/sonic-exporter:vX.Y.Z` | Recommended Docker deployment on SONiC Community OS |
 | `ghcr.io/premday/sonic-exporter:latest` | Convenience tag for the newest stable release; not recommended for production pinning |
 
 The repository does not publish `.deb` packages.

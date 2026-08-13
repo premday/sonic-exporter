@@ -1,6 +1,6 @@
-# Docker deployment for SONiC
+# Docker deployment for SONiC Community OS
 
-This is the recommended production path for running `sonic-exporter` on a SONiC switch. It covers online and offline image delivery, a disposable canary, reboot persistence with `systemd`, validation, upgrades, rollback, and removal.
+This is the recommended production path for running `sonic-exporter` on a SONiC Community OS switch. It covers online and offline image delivery, a disposable canary, reboot persistence with `systemd`, validation, upgrades, rollback, and removal.
 
 > Use an immutable release tag such as `vX.Y.Z`. Do not use `latest` in production.
 
@@ -52,7 +52,7 @@ Keep the old image until the new release has passed validation.
 
 A Docker image tarball created with `docker save` is different from the release archive that contains the standalone binary.
 
-On a connected Linux host:
+On a connected workstation that supports amd64 container images:
 
 ```bash
 RELEASE_TAG=vX.Y.Z
