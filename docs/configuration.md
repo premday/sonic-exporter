@@ -1,6 +1,6 @@
 # Configuration reference
 
-`sonic-exporter` uses CLI flags for the HTTP listener and host paths, and environment variables for Redis and collector settings.
+`sonic-exporter` uses CLI flags for its SONiC Community OS HTTP listener and switch paths, and environment variables for Redis and collector settings.
 
 > Settings are read at process startup. Restart the exporter after changing a flag or environment variable.
 
@@ -22,9 +22,9 @@
 |---|---|---|
 | `--web.listen-address` | TCP address used by the HTTP server | `:9101` |
 | `--web.telemetry-path` | Metrics endpoint path | `/metrics` |
-| `--web.vrf` | Linux VRF device for HTTP listeners; an empty value disables VRF binding | `mgmt` |
+| `--web.vrf` | VRF device for HTTP listeners; an empty value disables VRF binding | `mgmt` |
 
-VRF mode uses Linux `SO_BINDTODEVICE`. It cannot be combined with exporter-toolkit systemd socket activation or `vsock://` listeners. Use `--web.vrf=` for those modes.
+VRF mode uses `SO_BINDTODEVICE`. It cannot be combined with exporter-toolkit systemd socket activation or `vsock://` listeners. Use `--web.vrf=` for those modes.
 
 ### Host filesystem path
 
@@ -32,9 +32,9 @@ VRF mode uses Linux `SO_BINDTODEVICE`. It cannot be combined with exporter-toolk
 |---|---|---|
 | `--path.rootfs` | Host root filesystem prefix used by the embedded filesystem collector | `/` |
 
-For direct binary deployments, keep the default `/`. Only containers that bind the host root at `/hostfs` should pass `--path.rootfs=/hostfs`.
+For an advanced direct-binary SONiC installation, keep the default `/`. Only containers that bind the switch root at `/hostfs` should pass `--path.rootfs=/hostfs`.
 
-On ordinary Linux hosts, pass `--web.vrf=`. The default `mgmt` value is intended for SONiC and startup fails when the selected VRF device is unavailable. In a SONiC container, use host networking and retain `NET_RAW`; see the [Docker deployment guide](deployment-docker-sonic.md).
+The default `mgmt` value is intended for SONiC Community OS and startup fails when the selected VRF device is unavailable. In the recommended SONiC container deployment, use host networking and retain `NET_RAW`; see the [Docker deployment guide](deployment-docker-sonic.md).
 
 ## Core settings
 
@@ -269,7 +269,7 @@ FRR collector behavior:
 
 ## Complete startup example
 
-Regular Linux host with TCP Redis and no VRF binding:
+Advanced direct-binary SONiC Community OS installation with TCP Redis:
 
 ```bash
 REDIS_ADDRESS=127.0.0.1:6379 \
@@ -279,7 +279,7 @@ PLATFORM_HEALTH_ENABLED=false \
 SYSTEM_ENABLED=false \
 DOCKER_ENABLED=false \
 FRR_ENABLED=false \
-./sonic-exporter --web.vrf=
+./sonic-exporter
 ```
 
 For all exporter-toolkit logging, TLS, and authentication options supported by the current build, run:
