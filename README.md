@@ -13,19 +13,25 @@
   </picture>
 </p>
 
-Prometheus telemetry for **SONiC network switches**: SONiC Redis collectors, a curated set of Linux host metrics, and optional FRRouting metrics through one scrape endpoint.
+Make SONiC Community OS switch telemetry easy to scrape. `sonic-exporter` brings SONiC Redis data, switch system metrics, and optional FRRouting metrics together at one Prometheus endpoint.
 
 > **Project lineage:** this repository is an independently maintained fork of [`kpetremann/sonic-exporter`](https://github.com/kpetremann/sonic-exporter). The Go module path continues to use the original [`vinted/sonic-exporter`](https://github.com/vinted/sonic-exporter) lineage.
+
+## Why sonic-exporter
+
+SONiC already holds valuable switch state in Redis, files, and platform services. `sonic-exporter` turns that state into practical Prometheus metrics without write access or unbounded collection work.
+
+It covers the switch signals operators need, from interfaces and queues to hardware, topology, routing, and system health. Its curated embedded `node_exporter` subset reports switch CPU, memory, storage, filesystem, load, time, and system statistics alongside SONiC-specific metrics.
 
 ## At a glance
 
 | | |
 |---|---|
 | **SONiC telemetry** | 16 collector groups for interfaces, queues, hardware, topology, switching, routing, and platform health |
-| **Host telemetry** | Curated `node_exporter` subset: CPU, memory, disk, filesystem, load, time, and system statistics |
+| **Switch system telemetry** | Curated `node_exporter` subset: switch CPU, memory, disk, filesystem, load, time, and system statistics |
 | **Routing telemetry** | Optional FRR/BGP, OSPF, BFD, route, RPKI, VRRP, and PIM metrics via `frr_exporter` |
 | **Endpoint** | `:9101/metrics`; the HTTP listener uses the SONiC `mgmt` VRF by default |
-| **Release targets** | Versioned GHCR image and static Linux/amd64 release archive |
+| **Release targets** | Versioned GHCR image and static amd64 release archive |
 
 The exporter is designed around read-only data access, cached metric snapshots, bounded labels, timeouts, and explicit limits for scale-sensitive collectors. Optional or heavier collectors remain disabled until enabled deliberately.
 
@@ -35,15 +41,17 @@ The exporter is designed around read-only data access, cached metric snapshots, 
 
 ## Quick start
 
-### Local binary
+### Local development binary check
 
-Build and start the exporter without VRF binding on a regular Linux development host:
+For a quick local development check, build and start the exporter without VRF binding:
 
 ```bash
 go build -o sonic-exporter ./cmd/sonic-exporter
 ./sonic-exporter --web.vrf=
 curl -fsS http://127.0.0.1:9101/metrics | head
 ```
+
+Production users should use the SONiC deployment paths below.
 
 ### Local development environment
 
@@ -62,9 +70,9 @@ curl -fsS http://127.0.0.1:9101/metrics | head
 |---|---|---|
 | SONiC switch with registry access | Versioned GHCR image managed by `systemd` | [Docker deployment for SONiC](docs/deployment-docker-sonic.md) |
 | Offline SONiC switch | Pull, `docker save`, transfer, and `docker load` the same versioned image | [Docker deployment for SONiC](docs/deployment-docker-sonic.md#offline-image-handoff) |
-| Regular Linux host | Release archive and a hardened `systemd` unit | [Binary deployment with systemd](docs/deployment-systemd.md) |
+| Advanced direct-binary SONiC installation | Release archive and a hardened `systemd` unit | [Binary deployment with systemd](docs/deployment-systemd.md) |
 
-The production Docker path is intentionally different from local Compose. Correct host metrics and management-VRF serving require host networking, host PID visibility, a read-only host-root bind, and the minimal `NET_RAW` capability. Follow the deployment guide rather than adapting the development command.
+The production Docker path is intentionally different from local Compose. Correct switch system metrics and management-VRF serving require host networking, host PID visibility, a read-only host-root bind, and the minimal `NET_RAW` capability. Follow the deployment guide rather than adapting the development command.
 
 ## Collectors
 
@@ -127,10 +135,10 @@ Most SONiC collectors refresh into in-memory snapshots so a Prometheus scrape do
 |---|---|---|
 | `--web.listen-address` | HTTP listen address | `:9101` |
 | `--web.telemetry-path` | Metrics path | `/metrics` |
-| `--web.vrf` | Linux VRF device; an empty value disables VRF binding | `mgmt` |
+| `--web.vrf` | VRF device; an empty value disables VRF binding | `mgmt` |
 | `--path.rootfs` | Host-root prefix used by the embedded filesystem collector | `/` |
 
-Use `--web.vrf=` on ordinary Linux hosts. In the recommended SONiC Docker deployment, keep the default management VRF and pass `--path.rootfs=/hostfs` with the host root mounted read-only at `/hostfs`.
+In the recommended SONiC Docker deployment, keep the default management VRF and pass `--path.rootfs=/hostfs` with the host root mounted read-only at `/hostfs`.
 
 ### Redis and metric filtering
 
@@ -186,7 +194,7 @@ These combinations were tested with SONiC Community releases. Other releases may
 | Design, caching, safety, and collector extension | [Architecture](docs/architecture.md) |
 | Flags and environment-variable reference | [Configuration](docs/configuration.md) |
 | Online/offline Docker deployment on SONiC | [Docker deployment for SONiC](docs/deployment-docker-sonic.md) |
-| Static binary on a regular Linux host | [Binary deployment with systemd](docs/deployment-systemd.md) |
+| Advanced direct binary on SONiC Community OS | [Binary deployment with systemd](docs/deployment-systemd.md) |
 | Common VRF, Redis, host-filesystem, and collector problems | [Troubleshooting](docs/troubleshooting.md) |
 | Dashboard import and validation | [Grafana dashboard](docs/grafana-dashboard.md) |
 | Maintainer release process and artifact types | [Releasing](docs/releasing.md) |
@@ -209,13 +217,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full local and CI-equivalent chec
 
 ## Releases and security
 
-Versioned tags publish a static Linux/amd64 archive, checksums, SBOMs, build attestations, and a GHCR image. Use immutable `vX.Y.Z` tags for deployments; GitHub Releases are the canonical release history. See [Releasing](docs/releasing.md) for artifact and verification details.
+Versioned tags publish a static amd64 archive, checksums, SBOMs, build attestations, and a GHCR image. Use immutable `vX.Y.Z` tags for deployments; GitHub Releases are the canonical release history. See [Releasing](docs/releasing.md) for artifact and verification details.
 
 Follow [SECURITY.md](SECURITY.md) when reporting a vulnerability. Reports containing secrets or actionable exploitation steps must use a private channel.
 
 ## Project status
 
-This project uses human engineering and human-reviewed AI-assisted workflows. Automated tests reduce risk but do not replace validation on representative SONiC hardware. Test new releases and optional collectors in a canary environment before wider production rollout.
+With broad collector coverage and a practical SONiC Community OS focus, `sonic-exporter` provides a strong foundation for switch telemetry. The project is backed by [PremDay](https://premday.org/), an on-premises infrastructure community. Automated tests reduce risk but do not replace validation on representative SONiC hardware. Test new releases and optional collectors in a canary environment before wider production rollout.
 
 ## License and acknowledgments
 
