@@ -133,7 +133,7 @@ All settings are read at startup. Restart the exporter after a configuration cha
 
 ## Grafana dashboard
 
-A single-switch drill-down dashboard for Grafana 10 and 11 is included at [`dashboards/sonic-exporter.json`](dashboards/sonic-exporter.json). Optional FDB, System, Docker, and FRR rows are collapsed by default.
+A single-switch drill-down dashboard using Grafana's `dashboard.grafana.app/v2` resource format is included at [`dashboards/sonic-exporter.json`](dashboards/sonic-exporter.json). Optional FDB, System, Docker, and FRR rows are collapsed by default.
 
 ```bash
 ./scripts/validate-dashboard.sh dashboards/sonic-exporter.json
