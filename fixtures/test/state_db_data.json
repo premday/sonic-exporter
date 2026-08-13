@@ -124,6 +124,27 @@
       "tx2disable": "True",
       "last_update_time": "Fri Jun 05 10:44:56 2026"
     },
+    "TRANSCEIVER_INFO|Ethernet24": {
+      "manufacturer": "Example Optics ",
+      "model": "EX-100G-CR5 ",
+      "serial": "EXAMPLE0001   ",
+      "vendor_rev": "A ",
+      "vendor_oui": "00-00-00",
+      "type": "QSFP28 or later"
+    },
+    "TRANSCEIVER_INFO|Ethernet248": {
+      "manufacturer": "Example Modules",
+      "model": "EX-400G-DAC1",
+      "serial": "EXAMPLE0002",
+      "vendor_rev": "20",
+      "vendor_oui": "00-00-01",
+      "type": "QSFP-DD Double Density 8X Pluggable Transceiver"
+    },
+    "TRANSCEIVER_INFO|Ethernet252": {
+      "manufacturer": "Example Modules",
+      "model": "EX-400G-DAC2",
+      "serial": "EXAMPLE0003"
+    },
     "TRANSCEIVER_STATUS_FLAG|Ethernet0": {
       "tx1fault": "False",
       "tx2fault": "True",
