@@ -3,7 +3,6 @@ package redis
 import (
 	"context"
 	"fmt"
-	"os"
 	"reflect"
 	"testing"
 
@@ -14,8 +13,7 @@ var ctx = context.Background()
 
 func TestHgetAll(t *testing.T) {
 	s := miniredis.RunT(t)
-
-	os.Setenv("REDIS_ADDRESS", s.Addr())
+	t.Setenv("REDIS_ADDRESS", s.Addr())
 
 	redisClient, _ := NewClient()
 

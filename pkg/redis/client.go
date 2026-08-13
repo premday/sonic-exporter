@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/ilyakaznacheev/cleanenv"
 	"github.com/redis/go-redis/v9"
@@ -152,7 +153,9 @@ func (c Client) ScanKeysFromDb(ctx context.Context, dbName, pattern string, coun
 
 func (c Client) Close() {
 	for name, client := range c.databases {
-		client.Close()
+		if err := client.Close(); err != nil {
+			slog.Error("Failed to close Redis client", "database", name, "error", err)
+		}
 		delete(c.databases, name)
 	}
 }
