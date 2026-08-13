@@ -199,9 +199,10 @@ The direct-binary path sees the host root at `/`, so keep the default `--path.ro
 
 ## Run a parallel canary
 
-A canary must use a different unit name and port. Copy the unit:
+A canary must use a different unit name, port, and binary path. Install the candidate binary separately, then copy the unit:
 
 ```bash
+sudo install -m 0755 ./sonic-exporter /usr/local/bin/sonic-exporter-canary
 sudo cp /etc/systemd/system/sonic-exporter.service \
   /etc/systemd/system/sonic-exporter-canary.service
 sudoedit /etc/systemd/system/sonic-exporter-canary.service
@@ -215,7 +216,7 @@ Description=SONiC Prometheus Exporter canary
 
 [Service]
 ExecStart=
-ExecStart=/usr/local/bin/sonic-exporter --web.vrf= --web.listen-address=:19101
+ExecStart=/usr/local/bin/sonic-exporter-canary --web.vrf= --web.listen-address=:19101
 ```
 
 Start only the canary and verify it:
@@ -234,6 +235,7 @@ Remove it without touching the production service:
 ```bash
 sudo systemctl disable --now sonic-exporter-canary.service 2>/dev/null || true
 sudo rm -f /etc/systemd/system/sonic-exporter-canary.service
+sudo rm -f /usr/local/bin/sonic-exporter-canary
 sudo systemctl daemon-reload
 ```
 

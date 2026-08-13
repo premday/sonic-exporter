@@ -6,7 +6,7 @@ Contributions are welcome. The highest-value changes keep the exporter read-only
 
 For a small bug fix, documentation correction, or test improvement, a pull request is usually enough. For a new collector, metric redesign, default change, or deployment behavior change, opening an issue first is recommended so the source, naming, cardinality, compatibility, and rollout impact can be discussed before implementation.
 
-Report security vulnerabilities privately through the process in [SECURITY.md](SECURITY.md), not in a public issue.
+Follow [SECURITY.md](SECURITY.md) when reporting a vulnerability. Reports containing secrets or actionable exploitation steps must use a private channel.
 
 ## Development setup
 

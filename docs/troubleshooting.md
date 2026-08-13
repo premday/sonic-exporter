@@ -104,10 +104,11 @@ curl -fsS http://192.0.2.10:9101/metrics \
   | grep -E '^sonic_.*collector_success|^sonic_.*scrape_duration_seconds'
 ```
 
-Test Redis from the same host namespace. Use `REDISCLI_AUTH` rather than putting a password in the command arguments:
+Test Redis from the same host namespace. Read the password without echoing it or storing it in shell history:
 
 ```bash
-export REDISCLI_AUTH='replace-with-password-if-needed'
+read -rsp 'Redis password: ' REDISCLI_AUTH && export REDISCLI_AUTH
+printf '\n'
 redis-cli -h 127.0.0.1 -p 6379 ping
 unset REDISCLI_AUTH
 ```

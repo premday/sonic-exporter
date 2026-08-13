@@ -198,7 +198,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full local and CI-equivalent chec
 
 Versioned tags publish a static Linux/amd64 archive, checksums, SBOMs, build attestations, and a GHCR image. Use immutable `vX.Y.Z` tags for deployments; GitHub Releases are the canonical release history. See [Releasing](docs/releasing.md) for artifact and verification details.
 
-Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Do not open a public issue for an undisclosed security problem.
+Follow [SECURITY.md](SECURITY.md) when reporting a vulnerability. Reports containing secrets or actionable exploitation steps must use a private channel.
 
 ## Project status
 
