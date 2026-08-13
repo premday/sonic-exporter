@@ -41,13 +41,13 @@ if ! jq empty "$dash_file" >/dev/null 2>&1; then
   fail "invalid JSON in dashboard file: $dash_file"
 fi
 
-title=$(jq -r '.title // empty' "$dash_file")
+title=$(jq -r '.title // .spec.title // empty' "$dash_file")
 if [[ "$title" != "SONiC Exporter" ]]; then
   fail "unexpected dashboard title: '$title' (expected: 'SONiC Exporter')"
 fi
 
 for required_var in datasource job instance; do
-  if ! jq -e --arg var "$required_var" '.templating.list // [] | any(.name == $var)' "$dash_file" >/dev/null; then
+  if ! jq -e --arg var "$required_var" '(.templating.list // .spec.variables // []) | any((.name // .spec.name) == $var)' "$dash_file" >/dev/null; then
     fail "missing required template variable: $required_var"
   fi
 done
@@ -62,8 +62,8 @@ if [[ -n "$invalid_uids" ]]; then
   done <<< "$invalid_uids"
 fi
 
-if ! jq -e '.panels | (type == "array" and length > 0)' "$dash_file" >/dev/null; then
-  fail "dashboard panels must be a non-empty array"
+if ! jq -e '(.panels // .spec.elements) | ((type == "array" or type == "object") and length > 0)' "$dash_file" >/dev/null; then
+  fail "dashboard panels or elements must be non-empty"
 fi
 
 panel_strings=$(jq -r '.. | strings' "$dash_file")
