@@ -29,6 +29,10 @@ Prometheus telemetry for **SONiC network switches**: SONiC Redis collectors, a c
 
 The exporter is designed around read-only data access, cached metric snapshots, bounded labels, timeouts, and explicit limits for scale-sensitive collectors. Optional or heavier collectors remain disabled until enabled deliberately.
 
+![Illustrative sonic-exporter command-line, container, package, and monitoring concepts](docs/assets/brand/sonic-exporter-application-concepts.png)
+
+*Brand concept artwork. Interfaces, values, and endpoints shown are illustrative; use the documented configuration and deployment guides for current behavior.*
+
 ## Quick start
 
 ### Local binary
