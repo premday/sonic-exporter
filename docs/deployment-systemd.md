@@ -1,8 +1,8 @@
-# Binary deployment with systemd
+# Advanced direct-binary deployment on SONiC Community OS
 
-This is the secondary deployment path for a regular Linux host or an advanced direct-binary installation. For a SONiC switch, prefer the [Docker deployment](deployment-docker-sonic.md), which includes the host-network and host-filesystem integration expected on the switch.
+This is an advanced direct-binary installation for a SONiC Community OS switch. For most switches, use the [Docker deployment](deployment-docker-sonic.md), which is the recommended path and includes the switch integration it needs.
 
-> This path has not been validated as broadly as the Docker-on-SONiC path. Test it in a lab or canary environment before production use.
+> This path has not been validated as broadly as Docker on SONiC Community OS. Test it in a lab or canary environment before production use.
 
 ## Contents
 
@@ -12,7 +12,6 @@ This is the secondary deployment path for a regular Linux host or an advanced di
 - [Create a protected environment file](#create-a-protected-environment-file)
 - [Install the systemd unit](#install-the-systemd-unit)
 - [Start and validate](#start-and-validate)
-- [Direct binary on a SONiC host](#direct-binary-on-a-sonic-host)
 - [Run a parallel canary](#run-a-parallel-canary)
 - [Update or roll back](#update-or-roll-back)
 
@@ -20,7 +19,7 @@ This is the secondary deployment path for a regular Linux host or an advanced di
 
 The published archive is a static **Linux/amd64 binary archive**. It is not a Docker image and cannot be loaded with `docker load`.
 
-A remote Linux host must be able to reach the target SONiC Redis service using the configured network and credentials. If Redis is exposed only on the switch loopback or through a local Unix socket, running the exporter remotely may not be appropriate.
+Install this archive directly on the SONiC Community OS switch. It must be a Linux/amd64 target that can run the published binary.
 
 ## Create the service account
 
@@ -28,7 +27,7 @@ A remote Linux host must be able to reach the target SONiC Redis service using t
 sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin sonic-exporter
 ```
 
-Use `/sbin/nologin` instead when that is the valid path on your distribution.
+Use `/sbin/nologin` instead when that is the valid path on the switch.
 
 ## Verify and install the binary
 
@@ -95,7 +94,7 @@ Type=simple
 User=sonic-exporter
 Group=sonic-exporter
 EnvironmentFile=/etc/sonic-exporter/sonic-exporter.env
-ExecStart=/usr/local/bin/sonic-exporter --web.vrf=
+ExecStart=/usr/local/bin/sonic-exporter
 Restart=on-failure
 RestartSec=5s
 UMask=0027
@@ -115,12 +114,14 @@ MemoryDenyWriteExecute=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 SystemCallArchitectures=native
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-This regular-Linux unit disables VRF binding with `--web.vrf=`. `ProtectSystem=strict` makes the filesystem read-only to the service while still permitting reads from `/proc`, `/etc`, and other sources. Do not add `ReadOnlyPaths` entries for optional paths that may not exist on the host; such entries can make service startup distribution-dependent.
+This SONiC Community OS unit retains the default `mgmt` VRF binding and grants only `CAP_NET_RAW` for `SO_BINDTODEVICE`. `ProtectSystem=strict` makes the filesystem read-only to the service while still permitting reads from `/proc`, `/etc`, and other switch sources. Do not add `ReadOnlyPaths` entries for optional paths that may not exist on the switch; such entries can make service startup platform-dependent.
 
 Validate the unit before starting it:
 
@@ -147,8 +148,8 @@ sudo journalctl -u sonic-exporter.service -n 100 --no-pager
 Check the endpoint:
 
 ```bash
-curl -fsS http://127.0.0.1:9101/metrics | head
-curl -fsS http://127.0.0.1:9101/metrics \
+curl -fsS http://192.0.2.10:9101/metrics | head
+curl -fsS http://192.0.2.10:9101/metrics \
   | grep -E 'sonic_.*collector_success|node_scrape_collector_success'
 ```
 
@@ -166,36 +167,7 @@ Useful metric prefixes include:
 
 If the service is running but a collector reports failure, use the [troubleshooting guide](troubleshooting.md) before weakening the unit hardening.
 
-## Direct binary on a SONiC host
-
-The default HTTP listener binds to the SONiC `mgmt` VRF. A direct binary therefore needs only `CAP_NET_RAW` for that listener. Create a drop-in:
-
-```bash
-sudo systemctl edit sonic-exporter.service
-```
-
-```ini
-[Service]
-ExecStart=
-ExecStart=/usr/local/bin/sonic-exporter
-AmbientCapabilities=CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_RAW
-```
-
-Then apply it:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart sonic-exporter.service
-```
-
-Validate through the management address rather than remote loopback:
-
-```bash
-curl -fsS http://192.0.2.10:9101/metrics | head
-```
-
-The direct-binary path sees the host root at `/`, so keep the default `--path.rootfs=/`. Treat this as an advanced canary path; the container deployment remains the recommended SONiC installation.
+The direct-binary path sees the switch root at `/`, so keep the default `--path.rootfs=/`. It retains the default `mgmt` VRF listener, which is why the unit includes `CAP_NET_RAW`. Treat it as an advanced canary path; the container deployment remains the recommended SONiC Community OS installation.
 
 ## Run a parallel canary
 
@@ -216,7 +188,7 @@ Description=SONiC Prometheus Exporter canary
 
 [Service]
 ExecStart=
-ExecStart=/usr/local/bin/sonic-exporter-canary --web.vrf= --web.listen-address=:19101
+ExecStart=/usr/local/bin/sonic-exporter-canary --web.listen-address=:19101
 ```
 
 Start only the canary and verify it:
@@ -226,7 +198,7 @@ sudo systemd-analyze verify /etc/systemd/system/sonic-exporter-canary.service
 sudo systemctl daemon-reload
 sudo systemctl start sonic-exporter-canary.service
 sudo systemctl status sonic-exporter-canary.service --no-pager
-curl -fsS http://127.0.0.1:19101/metrics >/dev/null && echo OK
+curl -fsS http://192.0.2.10:19101/metrics >/dev/null && echo OK
 sudo journalctl -u sonic-exporter-canary.service -n 100 --no-pager
 ```
 
