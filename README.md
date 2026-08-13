@@ -223,7 +223,7 @@ Follow [SECURITY.md](SECURITY.md) when reporting a vulnerability. Reports contai
 
 ## Project status
 
-With broad collector coverage and a practical SONiC Community OS focus, `sonic-exporter` provides a strong foundation for switch telemetry. The project is backed by [PremDay](https://premday.org/), an on-premises infrastructure community. Automated tests reduce risk but do not replace validation on representative SONiC hardware. Test new releases and optional collectors in a canary environment before wider production rollout.
+With broad collector coverage and a practical SONiC Community OS focus, `sonic-exporter` provides a strong foundation for switch telemetry. The project is backed by [PremDay](https://premday.org/), an on-premises infrastructure community. It combines human engineering with AI-assisted workflows, and all AI-assisted contributions are reviewed by people. Automated tests reduce risk but do not replace validation on representative SONiC hardware. Test new releases and optional collectors in a canary environment before wider production rollout.
 
 ## License and acknowledgments
 
