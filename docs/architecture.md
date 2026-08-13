@@ -28,8 +28,9 @@ flowchart TD
 - Entrypoint: `cmd/sonic-exporter/main.go`.
 - Core collectors are always registered:
   - `NewInterfaceCollector`, `NewHwCollector`, `NewCrmCollector`, `NewQueueCollector`.
-- Optional collectors are gated by `IsEnabled()` before registration:
-  - `NewLldpCollector`, `NewVlanCollector`, `NewLagCollector`, `NewFdbCollector`, `NewSystemCollector`, `NewDockerCollector`, `NewFrrCollector`.
+- Configurable collectors are gated by `IsEnabled()` before registration:
+  - enabled by default: `NewLldpCollector`, `NewVlanCollector`, `NewLagCollector`, `NewSwitchCollector`, `NewThermalCollector`, `NewTransceiverCollector`;
+  - disabled by default: `NewFdbCollector`, `NewRoutingCollector`, `NewPlatformHealthCollector`, `NewSystemCollector`, `NewDockerCollector`, `NewFrrCollector`.
 - The binary also registers a curated `node_exporter` subset (`loadavg`, `cpu`, `diskstats`, `filesystem`, `meminfo`, `time`, `stat`).
 
 ### HTTP listener wiring
@@ -41,6 +42,15 @@ flowchart TD
 - Listener setup fails if the selected VRF cannot be used. It never falls back to the default routing table.
 - VRF binding applies only to HTTP listeners. Redis clients and collector sockets are not changed.
 
+### Host filesystem wiring
+
+- `cmd/sonic-exporter/main.go` registers `--path.rootfs`, which defaults to `/`.
+- A direct binary uses the host root directly and should keep that default.
+- The recommended SONiC container binds the host root at `/hostfs`, passes `--path.rootfs=/hostfs`, and uses host PID mode.
+- Host PID mode exposes the host `/proc/1/mountinfo`, including mount options used by `node_filesystem_readonly`.
+- The rootfs prefix is applied only to filesystem system calls; `/hostfs` must not leak into exported mountpoint labels.
+- The root bind is read-only with `rslave` propagation so host mount changes remain visible without granting write access.
+
 ## Collector execution models
 
 This repo currently uses two cache patterns.
@@ -48,7 +58,7 @@ This repo currently uses two cache patterns.
 | Model | Collectors | Refresh trigger | Cache lock style |
 |---|---|---|---|
 | Scrape-time cache | `interface`, `hw`, `crm`, `queue` | Refresh inside `Collect` when older than 15s | `sync.Mutex` |
-| Background refresh loop | `lldp`, `vlan`, `lag`, `fdb`, `system`, `docker` | `refreshLoop` ticker + `refreshMetrics` | `sync.RWMutex` |
+| Background refresh loop | `lldp`, `vlan`, `lag`, `fdb`, `switch`, `thermal`, `transceiver`, `routing`, `platform health`, `system`, `docker` | `refreshLoop` ticker + `refreshMetrics` | `sync.RWMutex` |
 | Delegated upstream exporter | `frr` | Upstream exporter collects at scrape time | Upstream-managed |
 
 ### Model A: scrape-time cache (15s window)
@@ -63,7 +73,7 @@ Flow:
 
 ## Model B: background refresh loop
 
-Files: `internal/collector/lldp_collector.go`, `internal/collector/vlan_collector.go`, `internal/collector/lag_collector.go`, `internal/collector/fdb_collector.go`, `internal/collector/system_collector.go`, `internal/collector/docker_collector.go`.
+Files: `internal/collector/lldp_collector.go`, `internal/collector/vlan_collector.go`, `internal/collector/lag_collector.go`, `internal/collector/fdb_collector.go`, `internal/collector/switch_collector.go`, `internal/collector/thermal_collector.go`, `internal/collector/transceiver_collector.go`, `internal/collector/routing_collector.go`, `internal/collector/platform_health_collector.go`, `internal/collector/system_collector.go`, and `internal/collector/docker_collector.go`.
 
 Flow:
 
@@ -123,6 +133,10 @@ Scale-sensitive collectors expose explicit guardrails:
 - VLAN: `VLAN_MAX_VLANS`, `VLAN_MAX_MEMBERS`, `entries_skipped`.
 - LAG: `LAG_MAX_LAGS`, `LAG_MAX_MEMBERS`, `entries_skipped`.
 - FDB: `FDB_MAX_ENTRIES`, `FDB_MAX_PORTS`, `FDB_MAX_VLANS`, `entries_skipped`, `entries_truncated`.
+- Switch: `SWITCH_MAX_ENTRIES`, `entries_skipped`, `entries_truncated`.
+- Transceiver: `TRANSCEIVER_MAX_PORTS`, `entries_skipped`, `entries_truncated`.
+- Routing: `ROUTING_MAX_NEIGHBORS`, `ROUTING_MAX_ROUTES`, `entries_skipped`, `entries_truncated`.
+- Platform Health: `PLATFORM_HEALTH_MAX_PROCESSES`, `PLATFORM_HEALTH_MAX_STORAGE_DEVICES`, `entries_skipped`, `entries_truncated`.
 - Docker: `DOCKER_MAX_CONTAINERS`, `entries_skipped`, `source_stale`.
 
 Deterministic output is preserved by sorting scanned keys before metric emission (for example in LLDP, VLAN, LAG, FDB, Docker).
@@ -140,7 +154,7 @@ Use this workflow to match existing project style.
    - Background refresh loop (better for heavier scans and bounded scrape latency).
 5. Pass the shared metric filter into the new in-repo SONiC collector and use it for every metric family emitted by that collector.
 6. Guard expensive metric groups before collection or read work when possible, not only at emit time. For example, skip source reads for a disabled family instead of gathering data and dropping it later.
-7. Ensure `Collect` emits cached data only (no direct Redis calls in `Collect`).
+7. For background-refresh collectors, ensure `Collect` emits cached data only and performs no direct Redis reads. For scrape-time collectors, keep the refresh bounded by the established cache window. For delegated collectors, document the upstream execution behavior.
 8. Add health metrics:
    - `<subsystem>_collector_success`
    - `<subsystem>_scrape_duration_seconds`
@@ -157,8 +171,10 @@ Use this workflow to match existing project style.
     - key metric assertions
     - safety metric assertions (`entries_skipped`, `entries_truncated`, etc.)
 13. Update docs:
-    - `README.md` collector list + env vars + examples
-    - this file (`docs/architecture.md`) if architecture behavior changed.
+    - `README.md` collector summary and user-visible examples;
+    - `docs/configuration.md` for flags, environment variables, defaults, timeouts, and limits;
+    - deployment or troubleshooting guides when host access or runtime requirements change;
+    - this file when architecture behavior changes.
 
 ## Best practices in this repo
 

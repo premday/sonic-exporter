@@ -1,761 +1,149 @@
 # sonic-exporter
 
-Prometheus exporter for SONiC network switches.
+[![CI](https://github.com/premday/sonic-exporter/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/premday/sonic-exporter/actions/workflows/test.yml)
+[![Latest release](https://img.shields.io/github/v/release/premday/sonic-exporter?display_name=tag)](https://github.com/premday/sonic-exporter/releases)
+[![License](https://img.shields.io/github/license/premday/sonic-exporter)](LICENSE)
+[![Container](https://img.shields.io/badge/container-GHCR-2496ED?logo=docker&logoColor=white)](https://github.com/premday/sonic-exporter/pkgs/container/sonic-exporter)
 
-This project collects switch telemetry from SONiC Redis databases and exposes it in Prometheus format. It also enables a curated subset of `node_exporter` host metrics, and can optionally expose FRRouting metrics through the upstream `frr_exporter` library, so you can monitor switch services and system health in one scrape target.
+Prometheus telemetry for **SONiC network switches**: SONiC Redis collectors, a curated set of Linux host metrics, and optional FRRouting metrics through one scrape endpoint.
 
-## Why exporters matter
+> **Project lineage:** this repository is an independently maintained fork of [`kpetremann/sonic-exporter`](https://github.com/kpetremann/sonic-exporter). The Go module path continues to use the original [`vinted/sonic-exporter`](https://github.com/vinted/sonic-exporter) lineage.
 
-Exporters let you turn platform-specific telemetry into a standard metrics format:
+## At a glance
 
-- Prometheus can scrape data from many systems in one consistent way.
-- You can build shared dashboards and alerts across vendors and platforms.
-- Metrics become queryable with one language (PromQL), which reduces operational friction.
-- You can correlate switch-level signals (interfaces, queues, FDB, LLDP) with host-level signals (CPU, memory, filesystem).
+| | |
+|---|---|
+| **SONiC telemetry** | 16 collector groups for interfaces, queues, hardware, topology, switching, routing, and platform health |
+| **Host telemetry** | Curated `node_exporter` subset: CPU, memory, disk, filesystem, load, time, and system statistics |
+| **Routing telemetry** | Optional FRR/BGP, OSPF, BFD, route, RPKI, VRRP, and PIM metrics via `frr_exporter` |
+| **Endpoint** | `:9101/metrics`; the HTTP listener uses the SONiC `mgmt` VRF by default |
+| **Release targets** | Versioned GHCR image and static Linux/amd64 release archive |
 
-For SONiC environments, this means less custom glue code and faster troubleshooting from a single monitoring stack.
+The exporter is designed around read-only data access, cached metric snapshots, bounded labels, timeouts, and explicit limits for scale-sensitive collectors. Optional or heavier collectors remain disabled until enabled deliberately.
 
-## What this project is for
+## Quick start
 
-`sonic-exporter` is focused on production-friendly SONiC observability:
+### Local binary
 
-- Reads from SONiC Redis and selected local read-only sources.
-- Keeps scrape latency stable with cached refresh loops per collector.
-- Enforces guardrails (timeouts, caps, bounded labels) to control cardinality and scrape cost.
-- Keeps experimental collectors opt-in.
+Build and start the exporter without VRF binding on a regular Linux development host:
 
-## Architecture
-
-### Runtime flow
-
-```mermaid
-flowchart LR
-    subgraph SONiC host
-        R[(SONiC Redis DBs)]
-        F[/Read-only files/]
-        C[[Allowlisted commands]]
-    end
-
-    subgraph sonic-exporter
-        M[cmd/sonic-exporter/main.go]
-        COL[Collectors\ninterface, hw, crm, queue, lldp, vlan, lag, fdb\nswitch, thermal, transceiver\nrouting*, platform*, system*, docker*, frr*]
-        CACHE[(In-memory metric cache)]
-        NODE[node_exporter subset\nloadavg,cpu,diskstats,filesystem,meminfo,time,stat]
-    end
-
-    P[(Prometheus)]
-
-    R --> COL
-    F --> COL
-    C --> COL
-    COL --> CACHE
-    CACHE --> M
-    NODE --> M
-    M -->|/metrics| P
+```bash
+go build -o sonic-exporter ./cmd/sonic-exporter
+./sonic-exporter --web.vrf=
+curl -fsS http://127.0.0.1:9101/metrics | head
 ```
 
-`*` Experimental collectors are disabled by default.
+### Local development environment
 
-### Repository structure
+The repository includes Redis fixtures for local development:
 
-```text
-sonic-exporter/
-├── cmd/sonic-exporter/      # bootstrap, collector registration, HTTP server
-├── internal/collector/      # SONiC collectors and collector tests
-├── pkg/redis/               # Redis access wrapper
-├── fixtures/test/           # test fixtures loaded into miniredis
-├── scripts/                 # static build and package helpers
-└── .github/workflows/       # CI test and release pipelines
+```bash
+docker compose up --build -d
+curl -fsS http://127.0.0.1:9101/metrics | head
 ```
 
-For a deeper breakdown, see `docs/architecture.md`.
+`docker-compose.yaml` is a development environment, **not** the production deployment pattern for a SONiC switch.
+
+### Choose a deployment path
+
+| Environment | Recommended path | Guide |
+|---|---|---|
+| SONiC switch with registry access | Versioned GHCR image managed by `systemd` | [Docker deployment for SONiC](docs/deployment-docker-sonic.md) |
+| Offline SONiC switch | Pull, `docker save`, transfer, and `docker load` the same versioned image | [Docker deployment for SONiC](docs/deployment-docker-sonic.md#offline-image-handoff) |
+| Regular Linux host | Release archive and a hardened `systemd` unit | [Binary deployment with systemd](docs/deployment-systemd.md) |
+
+The production Docker path is intentionally different from local Compose. Correct host metrics and management-VRF serving require host networking, host PID visibility, a read-only host-root bind, and the minimal `NET_RAW` capability. Follow the deployment guide rather than adapting the development command.
 
 ## Collectors
 
-| Collector | Purpose | Default |
+| Collector | What it exposes | Default |
 |---|---|---|
-| Interface | Interface operation and traffic metrics | Enabled |
-| HW | PSU and fan health metrics | Enabled |
+| Interface | Interface state and traffic counters | Enabled |
+| HW | PSU and fan health | Enabled |
 | CRM | Critical resource monitoring | Enabled |
 | Queue | Queue counters and watermarks | Enabled |
 | LLDP | LLDP neighbors from Redis | Enabled |
-| VLAN | VLAN and VLAN member state | Enabled |
+| VLAN | VLAN and VLAN-member state | Enabled |
 | LAG | PortChannel and member state | Enabled |
-| Switch | Switch-level Redis state from `APPL_DB` `SWITCH_TABLE` | Enabled |
-| Thermal | ASIC and SFP max temperatures from `STATE_DB` | Enabled |
-| Transceiver | Transceiver identity, status, flags, and thresholds from `STATE_DB` | Enabled |
-| Routing | Route and neighbor summaries from `APPL_DB` | Disabled (`ROUTING_ENABLED=false`) |
-| Platform Health | Process, storage, and system health metrics from `STATE_DB` | Disabled (`PLATFORM_HEALTH_ENABLED=false`) |
-| FDB | FDB summary from ASIC DB | Disabled (`FDB_ENABLED=false`) |
-| System (experimental) | Switch identity, software metadata, uptime | Disabled (`SYSTEM_ENABLED=false`) |
-| Docker (experimental) | Container runtime metrics from `STATE_DB` | Disabled (`DOCKER_ENABLED=false`) |
-| FRR | FRRouting metrics via upstream `frr_exporter` | Disabled (`FRR_ENABLED=false`) |
+| Switch | `APPL_DB` `SWITCH_TABLE` state | Enabled |
+| Thermal | ASIC and SFP temperatures | Enabled |
+| Transceiver | Identity, status, flags, and thresholds | Enabled |
+| Routing | Route and neighbor summaries | Disabled (`ROUTING_ENABLED=false`) |
+| Platform health | Process, storage, and system-health data | Disabled (`PLATFORM_HEALTH_ENABLED=false`) |
+| FDB | FDB summaries from ASIC DB | Disabled (`FDB_ENABLED=false`) |
+| System *(experimental)* | Switch identity, software metadata, and uptime | Disabled (`SYSTEM_ENABLED=false`) |
+| Docker *(experimental)* | Container statistics from SONiC `STATE_DB` | Disabled (`DOCKER_ENABLED=false`) |
+| FRR | FRRouting metrics through upstream `frr_exporter` | Disabled (`FRR_ENABLED=false`) |
 
-Collector implementations live in `internal/collector/*_collector.go`.
+Collector implementations live in `internal/collector/*_collector.go`. See the [configuration reference](docs/configuration.md) for all flags, environment variables, defaults, and cardinality controls.
 
-## Grafana dashboard (experimental)
+## How it works
 
-The Grafana dashboard lives in `dashboards/sonic-exporter.json`. It is a single-switch drilldown dashboard for Grafana 10 and Grafana 11.
+```mermaid
+flowchart LR
+    subgraph SONiC[SONiC host]
+        REDIS[(SONiC Redis DBs)]
+        FILES[/Read-only files/]
+        CMDS[[Allowlisted commands]]
+    end
 
-Rows are ordered this way:
+    subgraph EXPORTER[sonic-exporter]
+        COLLECTORS[SONiC collectors]
+        CACHE[(Cached metric snapshots)]
+        NODE[Curated node_exporter collectors]
+        HTTP[VRF-aware HTTP server]
+    end
 
-- `Overview / Exporter Health`
-- `Interfaces / Queues`
-- `Hardware / CRM / Host`
-- `Topology / L2`
-- `Optional / FDB`
-- `Optional / System`
-- `Optional / Docker`
-- `Optional / FRR`
+    PROM[(Prometheus)]
 
-The optional rows are collapsed by default and are safe when those metrics are absent. Validate dashboard changes with:
+    REDIS --> COLLECTORS
+    FILES --> COLLECTORS
+    CMDS --> COLLECTORS
+    COLLECTORS --> CACHE
+    CACHE --> HTTP
+    NODE --> HTTP
+    HTTP -->|/metrics| PROM
+```
+
+Most SONiC collectors refresh into in-memory snapshots so a Prometheus scrape does not need to perform an unbounded Redis scan. The four original core collectors use a short scrape-time cache; newer collectors use background refresh loops. See [Architecture](docs/architecture.md) for the execution models and extension rules.
+
+## Configuration essentials
+
+### HTTP listener
+
+| Flag | Description | Default |
+|---|---|---|
+| `--web.listen-address` | HTTP listen address | `:9101` |
+| `--web.telemetry-path` | Metrics path | `/metrics` |
+| `--web.vrf` | Linux VRF device; an empty value disables VRF binding | `mgmt` |
+| `--path.rootfs` | Host-root prefix used by the embedded filesystem collector | `/` |
+
+Use `--web.vrf=` on ordinary Linux hosts. In the recommended SONiC Docker deployment, keep the default management VRF and pass `--path.rootfs=/hostfs` with the host root mounted read-only at `/hostfs`.
+
+### Redis and metric filtering
+
+| Variable | Description | Default |
+|---|---|---|
+| `REDIS_ADDRESS` | Redis address (`host:port` for TCP) | `localhost:6379` |
+| `REDIS_PASSWORD` | Redis password | empty |
+| `REDIS_NETWORK` | Redis network (`tcp` or `unix`) | `tcp` |
+| `SONIC_DISABLED_METRICS` | Full metric names or wildcard patterns to suppress in in-repo SONiC collectors | empty |
+
+All settings are read at startup. Restart the exporter after a configuration change. The [full reference](docs/configuration.md) documents every collector toggle, timeout, refresh interval, and limit.
+
+## Grafana dashboard
+
+A single-switch drill-down dashboard for Grafana 10 and 11 is included at [`dashboards/sonic-exporter.json`](dashboards/sonic-exporter.json). Optional FDB, System, Docker, and FRR rows are collapsed by default.
 
 ```bash
 ./scripts/validate-dashboard.sh dashboards/sonic-exporter.json
 ```
 
-For import, provisioning, variables, validation, smoke checks, and limits, see `docs/grafana-dashboard.md`.
-
-## Quick start
-
-### Run locally
-
-```bash
-./sonic-exporter --web.vrf=
-curl localhost:9101/metrics
-```
-
-### Run dev environment
-
-```bash
-docker-compose up --build -d
-curl localhost:9101/metrics
-```
-
-`docker-compose.yaml` is for local development only. It starts a test Redis container and is not the production SONiC deployment pattern.
-
-### Web listener VRF
-
-The exporter supports Linux only. Its HTTP listener binds to the SONiC `mgmt` VRF by default:
-
-- `--web.vrf=mgmt` uses the default management VRF.
-- `--web.vrf=<name>` selects another VRF device.
-- `--web.vrf=` disables VRF binding for local development and regular Linux hosts.
-
-Startup fails if the selected VRF cannot be used. There is no fallback to the default routing table. This setting applies only to the HTTP listener. Redis and other collector sockets keep their existing behavior.
-
-### Choose your path
-
-| Goal | Use this path | Why | Start here |
-|---|---|---|---|
-| Local dev | `docker-compose up --build -d` | Best for local testing with the bundled Redis fixture setup. Development only. | `### Run dev environment` |
-| Recommended SONiC deployment | Docker from GHCR | Best default for SONiC switches. Use the published image `ghcr.io/premday/sonic-exporter:vX.Y.Z`. | `### Docker deployment for SONiC` |
-| Offline SONiC deployment | Docker from GHCR, saved and loaded as a Docker tarball | Best when the switch cannot pull from GHCR directly. Pull the same release image, save it, copy it, then load it on the switch. | `### Docker deployment for SONiC` |
-| Secondary Linux deployment | Release tarball plus `systemd` | Use this on a regular Linux host, or for advanced manual installs. Example artifact: `sonic-exporter_X.Y.Z_linux_amd64.tar.gz`. | `## Binary tarball deployment with systemd` |
-
-### Docker deployment for SONiC
-
-Optional collectors stay opt in. Keep `ROUTING_ENABLED=false`, `PLATFORM_HEALTH_ENABLED=false`, `SYSTEM_ENABLED=false`, `DOCKER_ENABLED=false`, and `FRR_ENABLED=false` unless you need them.
-
-The container must use host networking so it can see the host `mgmt` VRF device. The image runs as the non-root `sonic` user. Its binary carries `cap_net_raw=ep`, and the container runtime must retain `NET_RAW` in the capability bounding set. Do not use privileged mode.
-
-#### Recommended online switch flow
-
-For a SONiC switch with outbound access to GHCR, use the published image directly. This is the default and recommended deployment path.
-
-Use a real release tag. Do not use `latest` in production.
-
-Pull the current release image on the switch:
-
-```bash
-RELEASE_TAG=vX.Y.Z
-
-sudo docker pull ghcr.io/premday/sonic-exporter:${RELEASE_TAG}
-sudo docker image inspect ghcr.io/premday/sonic-exporter:${RELEASE_TAG} --format '{{.Id}}'
-```
-
-#### Offline Docker tarball handoff
-
-If the switch cannot pull from GHCR, pull the same release image on a connected Linux host, save it to a tarball, copy it to the switch, then load it there.
-
-On a connected Linux host:
-
-```bash
-RELEASE_TAG=vX.Y.Z
-
-docker pull ghcr.io/premday/sonic-exporter:${RELEASE_TAG}
-docker save ghcr.io/premday/sonic-exporter:${RELEASE_TAG} -o sonic-exporter-${RELEASE_TAG}.docker.tar
-sha256sum sonic-exporter-${RELEASE_TAG}.docker.tar > sonic-exporter-${RELEASE_TAG}.docker.tar.sha256
-scp sonic-exporter-${RELEASE_TAG}.docker.tar sonic-exporter-${RELEASE_TAG}.docker.tar.sha256 admin@192.0.2.10:/home/admin/
-```
-
-On the SONiC switch:
-
-```bash
-cd /home/admin
-RELEASE_TAG=vX.Y.Z
-
-sha256sum -c sonic-exporter-${RELEASE_TAG}.docker.tar.sha256
-sudo docker load -i sonic-exporter-${RELEASE_TAG}.docker.tar
-sudo docker image inspect ghcr.io/premday/sonic-exporter:${RELEASE_TAG} --format '{{.Id}}'
-```
-
-`docker load` restores the same repository and tag metadata, so you can keep using `ghcr.io/premday/sonic-exporter:vX.Y.Z` in your run command or `systemd` unit.
-
-The external Ansible repo should handle copy, `docker load`, container creation, and later rollout steps. Keep that deployment logic out of this repo.
-
-#### Runtime environment variables
-
-Minimum SONiC runtime settings:
-
-```bash
-REDIS_ADDRESS=127.0.0.1:6379
-REDIS_NETWORK=tcp
-REDIS_PASSWORD=
-SONIC_DISABLED_METRICS=
-FDB_ENABLED=false
-ROUTING_ENABLED=false
-PLATFORM_HEALTH_ENABLED=false
-SYSTEM_ENABLED=false
-DOCKER_ENABLED=false
-FRR_ENABLED=false
-```
-
-`127.0.0.1:6379` assumes the container uses host networking so it can reach the SONiC Redis service on the switch itself.
-
-#### Example docker run for a manual canary
-
-Use host networking on SONiC so Redis at `127.0.0.1:6379` stays reachable from inside the container. This is a disposable canary only. It uses its own name and port, and it must not stop, replace, or modify an existing `sonic-exporter` container or service. For reboot persistence, use the `systemd` service in the next section instead.
-
-`--pid=host` makes `/proc/1/mountinfo` visible from the host PID namespace. The filesystem collector gets mount names and the readonly metric from those mountinfo options. `--path.rootfs=/hostfs` prefixes the paths passed to `statfs`, so capacity and inode values come from the host root mounted at `/hostfs`. The `rslave` propagation mode carries host mount changes into the container. The root bind is read-only, so it exposes readable host metadata without granting write access.
-
-```bash
-CANARY_SUFFIX=$(date +%s)
-CANARY_NAME="sonic-exporter-hostfs-canary-${CANARY_SUFFIX}"
-CANARY_PORT=$((19000 + CANARY_SUFFIX % 1000))
-SWITCH_MGMT_ADDRESS=192.0.2.10
-
-if sudo ss -ltn "sport = :${CANARY_PORT}" | grep -q LISTEN; then
-  echo "canary port ${CANARY_PORT} is already in use" >&2
-  exit 1
-fi
-
-sudo docker run -d \
-  --name "${CANARY_NAME}" \
-  --network host \
-  --pid=host \
-  --volume /:/hostfs:ro,rslave \
-  --cap-drop ALL \
-  --cap-add NET_RAW \
-  --restart no \
-  --label app=sonic-exporter-hostfs-canary \
-  -e REDIS_ADDRESS=127.0.0.1:6379 \
-  -e REDIS_NETWORK=tcp \
-  -e SONIC_DISABLED_METRICS= \
-  -e FDB_ENABLED=false \
-  -e ROUTING_ENABLED=false \
-  -e PLATFORM_HEALTH_ENABLED=false \
-  -e SYSTEM_ENABLED=false \
-  -e DOCKER_ENABLED=false \
-  -e FRR_ENABLED=false \
-  ghcr.io/premday/sonic-exporter:vX.Y.Z \
-  ./sonic-exporter \
-  --web.listen-address=":${CANARY_PORT}" \
-  --path.rootfs=/hostfs
-```
-
-Validate the canary before removing it. Discover the SONiC `/host` mount at runtime, then confirm the filesystem collector succeeds and exports matching size, device, and readonly state for `/host`. Do not substitute the local container root for this check:
-
-```bash
-findmnt -no SOURCE,FSTYPE,OPTIONS /host
-HOST_DEVICE=$(findmnt -no SOURCE /host)
-HOST_FSTYPE=$(findmnt -no FSTYPE /host)
-HOST_OPTIONS=$(findmnt -no OPTIONS /host)
-HOST_SIZE_BYTES=$(($(stat -f -c '%S' /host) * $(stat -f -c '%b' /host)))
-case ",${HOST_OPTIONS}," in
-  *,ro,*) HOST_READONLY=1 ;;
-  *) HOST_READONLY=0 ;;
-esac
-
-METRICS_URL="http://${SWITCH_MGMT_ADDRESS}:${CANARY_PORT}/metrics"
-
-select_host_metric() {
-  curl -fsS "${METRICS_URL}" | awk -v metric_name="$1" -v device="${HOST_DEVICE}" -v fstype="${HOST_FSTYPE}" '
-    index($0, metric_name "{") == 1 &&
-    index($0, "device=\"" device "\"") &&
-    index($0, "fstype=\"" fstype "\"") &&
-    index($0, "mountpoint=\"/host\"") { print }
-  '
-}
-
-curl -fsS "${METRICS_URL}" | grep -qx 'node_scrape_collector_success{collector="filesystem"} 1' &&
-HOST_SIZE_METRIC=$(select_host_metric node_filesystem_size_bytes) &&
-test "$(printf '%s\n' "${HOST_SIZE_METRIC}" | grep -c .)" -eq 1 &&
-awk -v metric_value="${HOST_SIZE_METRIC##* }" -v host_size="${HOST_SIZE_BYTES}" 'BEGIN { exit !(metric_value + 0 == host_size + 0) }' &&
-HOST_READONLY_METRIC=$(select_host_metric node_filesystem_readonly) &&
-test "$(printf '%s\n' "${HOST_READONLY_METRIC}" | grep -c .)" -eq 1 &&
-test "${HOST_READONLY_METRIC##* }" = "${HOST_READONLY}" &&
-if curl -fsS "${METRICS_URL}" | grep -q 'mountpoint="/hostfs'; then
-  echo "hostfs path leaked into a metric label" >&2
-  exit 1
-fi
-```
-
-Roll back the canary by removing only its unique container. This does not touch the existing exporter:
-
-```bash
-sudo docker rm -f "${CANARY_NAME}"
-```
-
-Runtime labels such as `managed-by=systemd` are added by `docker run` or by the `ExecStart` line in the `systemd` unit. They are not built into the image.
-
-The image has no embedded Docker `HEALTHCHECK`. A fixed check cannot follow a custom VRF selection safely. Use Prometheus or another external HTTP check for readiness. Container exit and the `systemd` restart policy provide liveness handling.
-
-#### Reboot-persistent SONiC container with systemd
-
-SONiC starts its local containers through `systemd` services tied to `sonic.target`, such as `database.service`, `swss.service`, `pmon.service`, and `lldp.service`. For the exporter, use a dedicated `sonic-exporter.service` so `systemd` owns the container lifecycle after reboot.
-
-This unit manages only the `sonic-exporter` container. It does not stop, remove, or restart existing SONiC containers.
-
-Create `/etc/systemd/system/sonic-exporter.service` on the switch:
-
-```ini
-[Unit]
-Description=SONiC Exporter container
-Requires=docker.service database.service
-After=docker.service database.service
-BindsTo=sonic.target
-After=sonic.target
-StartLimitIntervalSec=1200
-StartLimitBurst=3
-
-[Service]
-User=root
-Restart=always
-RestartSec=30
-ExecStartPre=/bin/sh -c 'until /usr/bin/redis-cli -h 127.0.0.1 -p 6379 ping | /bin/grep -q PONG; do sleep 2; done'
-ExecStartPre=-/usr/bin/docker rm -f sonic-exporter
-ExecStart=/usr/bin/docker run --name sonic-exporter --label app=sonic-exporter --label managed-by=systemd --restart no --network host --pid=host --volume /:/hostfs:ro,rslave --cap-drop ALL --cap-add NET_RAW -e REDIS_ADDRESS=127.0.0.1:6379 -e REDIS_NETWORK=tcp -e REDIS_PASSWORD= -e SONIC_DISABLED_METRICS= -e FDB_ENABLED=false -e ROUTING_ENABLED=false -e PLATFORM_HEALTH_ENABLED=false -e SYSTEM_ENABLED=false -e DOCKER_ENABLED=false -e FRR_ENABLED=false ghcr.io/premday/sonic-exporter:vX.Y.Z ./sonic-exporter --path.rootfs=/hostfs
-ExecStop=-/usr/bin/docker stop sonic-exporter
-ExecStopPost=-/usr/bin/docker rm -f sonic-exporter
-
-[Install]
-WantedBy=sonic.target
-```
-
-Enable and start it:
-
-```bash
-sudo systemd-analyze verify /etc/systemd/system/sonic-exporter.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now sonic-exporter.service
-sudo systemctl status sonic-exporter.service --no-pager
-```
-
-Check that only the exporter container is managed by this service:
-
-```bash
-sudo docker inspect sonic-exporter \
-  --format 'Name={{.Name}} Image={{.Config.Image}} Network={{.HostConfig.NetworkMode}} Restart={{.HostConfig.RestartPolicy.Name}} Status={{.State.Status}}'
-```
-
-The Docker restart policy should be `no` when `systemd` owns the container. That keeps one restart owner instead of having both Docker and `systemd` restart the same container.
-
-The Docker-managed service uses the same host filesystem setup as the manual canary. Host PID mode exposes the host's `/proc/1/mountinfo`, including mount options that produce `node_filesystem_readonly`. The rootfs flag prefixes each filesystem `statfs` path with `/hostfs`. Keep the root bind read-only and `rslave` so host mounts remain visible as they appear. Do not add privileged mode, `CAP_SYS_ADMIN`, a writable root bind, or Docker socket access.
-
-Validate the Redis-backed collectors on the switch:
-
-```bash
-curl -fsS http://192.0.2.10:9101/metrics | grep -E 'sonic_.*collector_success|sonic_lldp_neighbors'
-```
-
-Replace `192.0.2.10` with the switch management address.
-
-If you can only reach the switch through SSH, use a tunnel from your workstation:
-
-```bash
-ssh -N -L 19101:192.0.2.10:9101 192.0.2.10
-```
-
-Then scrape locally:
-
-```bash
-curl http://127.0.0.1:19101/metrics
-```
-
-Replace both uses of `192.0.2.10` with the switch management address. The tunnel targets the VRF-bound management listener, not remote loopback.
-
-#### Upgrade the persistent SONiC container
-
-Pull or load the new immutable release tag first. Do not reuse an old tag for a different image.
-
-If the switch can reach GHCR:
-
-```bash
-RELEASE_TAG=vX.Y.Z
-
-sudo docker pull ghcr.io/premday/sonic-exporter:${RELEASE_TAG}
-sudo docker image inspect ghcr.io/premday/sonic-exporter:${RELEASE_TAG} --format '{{.Id}}'
-```
-
-If the switch is offline, repeat the offline switch flow with the new version, then verify the loaded image:
-
-```bash
-RELEASE_TAG=vX.Y.Z
-
-sha256sum -c sonic-exporter-${RELEASE_TAG}.docker.tar.sha256
-sudo docker load -i sonic-exporter-${RELEASE_TAG}.docker.tar
-sudo docker image inspect ghcr.io/premday/sonic-exporter:${RELEASE_TAG} --format '{{.Id}}'
-```
-
-Update only the image tag in `/etc/systemd/system/sonic-exporter.service`, then restart only the exporter service:
-
-```bash
-sudo cp /etc/systemd/system/sonic-exporter.service /etc/systemd/system/sonic-exporter.service.bak
-sudoedit /etc/systemd/system/sonic-exporter.service
-sudo systemd-analyze verify /etc/systemd/system/sonic-exporter.service
-sudo systemctl daemon-reload
-sudo systemctl restart sonic-exporter.service
-sudo systemctl status sonic-exporter.service --no-pager
-```
-
-Validate the new container:
-
-```bash
-sudo docker inspect sonic-exporter \
-  --format 'Image={{.Config.Image}} Status={{.State.Status}} Restart={{.HostConfig.RestartPolicy.Name}}'
-curl -fsS http://192.0.2.10:9101/metrics | grep -E 'sonic_.*collector_success|sonic_lldp_neighbors'
-```
-
-Replace `192.0.2.10` with the switch management address.
-
-Keep the previous image tag on the switch until the new one has been checked. That makes rollback simple.
-
-#### Roll back to the previous image
-
-Confirm the old image still exists:
-
-```bash
-PREVIOUS_RELEASE_TAG=vX.Y.Z
-
-sudo docker image inspect ghcr.io/premday/sonic-exporter:${PREVIOUS_RELEASE_TAG} --format '{{.Id}}'
-```
-
-Change `/etc/systemd/system/sonic-exporter.service` back to the previous image tag, then reload and restart only this service:
-
-```bash
-sudoedit /etc/systemd/system/sonic-exporter.service
-sudo systemd-analyze verify /etc/systemd/system/sonic-exporter.service
-sudo systemctl daemon-reload
-sudo systemctl restart sonic-exporter.service
-sudo systemctl status sonic-exporter.service --no-pager
-```
-
-Do not restart SONiC core services for an exporter rollback.
-
-#### Stop, disable, or uninstall
-
-Stop the exporter until the next boot:
-
-```bash
-sudo systemctl stop sonic-exporter.service
-```
-
-Disable it so it does not start at boot:
-
-```bash
-sudo systemctl disable --now sonic-exporter.service
-```
-
-Fully remove the service unit and the exporter container:
-
-```bash
-sudo systemctl disable --now sonic-exporter.service
-sudo systemctl reset-failed sonic-exporter.service 2>/dev/null || true
-sudo rm -f /etc/systemd/system/sonic-exporter.service
-sudo systemctl daemon-reload
-sudo docker rm -f sonic-exporter 2>/dev/null || true
-```
-
-Optionally remove only known exporter image tags after you are sure they are no longer needed:
-
-```bash
-sudo docker image rm ghcr.io/premday/sonic-exporter:vX.Y.Z
-sudo docker image rm ghcr.io/premday/sonic-exporter:vA.B.C
-```
-
-Do not use `docker system prune`, `docker container prune`, or broad `docker rm` commands on a SONiC switch. Those commands can affect SONiC containers that are unrelated to this exporter.
-
-Do not mount /var/run/docker.sock. The Docker collector reads SONiC `STATE_DB` data only and does not need Docker socket access.
-
-If you enable optional collectors later, add only the read-only mounts they need:
-
-- `/etc/sonic:/etc/sonic:ro` for System collector version files
-- `/host:/host:ro` only when the System collector needs machine data
-- `/proc:/proc:ro` for System collector uptime
-- `/var/run/frr:/var/run/frr:ro` for FRR socket access
-
-Keep these mounts out unless the related optional collector is enabled.
-
-#### Handoff notes
-
-- This repo builds and tests the image locally.
-- The external Ansible repo should handle copy, `docker load`, container creation, and later rollout steps.
-- Registry publishing is optional and not required for the offline workflow.
-- If you want Debian 11 targets later, treat them as canary validation first. They are not documented here as already validated.
-
-## Configuration
-
-### Web listener
-
-| Flag | Description | Default |
-|---|---|---|
-| `--web.listen-address` | TCP address used by the HTTP server | `:9101` |
-| `--web.telemetry-path` | Metrics endpoint path | `/metrics` |
-| `--web.vrf` | Linux VRF device for HTTP listeners; an empty value disables VRF binding | `mgmt` |
-
-VRF mode uses Linux `SO_BINDTODEVICE`. It cannot be combined with exporter-toolkit systemd socket activation or `vsock://` listeners. Use `--web.vrf=` for those modes.
-
-### Core settings
-
-| Variable | Description | Default |
-|---|---|---|
-| `REDIS_ADDRESS` | Redis address (`host:port` for TCP) | `localhost:6379` |
-| `REDIS_PASSWORD` | Password for Redis | empty |
-| `REDIS_NETWORK` | Redis network type (`tcp` or `unix`) | `tcp` |
-| `SONIC_DISABLED_METRICS` | Comma-separated full metric names or wildcard patterns to suppress for in-repo SONiC collectors only | empty |
-
-### Host filesystem path
-
-| Flag | Description | Default |
-|---|---|---|
-| `--path.rootfs` | Host root filesystem prefix used by the embedded filesystem collector | `/` |
-
-For direct binary deployments, keep the default `/`. Only containers that bind the host root at `/hostfs` should pass `--path.rootfs=/hostfs`.
-
-### Source-side metric disabling
-
-Use `SONIC_DISABLED_METRICS` to suppress metric families from the in-repo SONiC collectors at exporter startup.
-
-- Matching uses full Prometheus metric names only.
-- Matching is case-sensitive.
-- Tokens are comma-separated and surrounding whitespace is ignored.
-- You must restart the exporter after changing this setting. There is no runtime reload.
-- This applies only to the in-repo SONiC collectors in this repo. It does not apply to upstream `node_exporter` metrics or FRR wrapper metrics.
-
-Exact-name example:
-
-```bash
-SONIC_DISABLED_METRICS=sonic_queue_watermark_bytes_total,sonic_interface_mtu_bytes
-```
-
-Wildcard example:
-
-```bash
-SONIC_DISABLED_METRICS='sonic_queue_*'
-```
-
-Be careful with broad patterns. A wide match can also hide health metrics such as `sonic_queue_collector_success`, `sonic_queue_scrape_duration_seconds`, `sonic_system_collector_success`, or `sonic_system_scrape_duration_seconds` if the full metric names match.
-
-### LLDP collector
-
-| Variable | Description | Default |
-|---|---|---|
-| `LLDP_ENABLED` | Enable LLDP collector | `true` |
-| `LLDP_INCLUDE_MGMT` | Include management interfaces like `eth0` | `true` |
-| `LLDP_REFRESH_INTERVAL` | Cache refresh interval | `30s` |
-| `LLDP_TIMEOUT` | Timeout for one refresh cycle | `2s` |
-| `LLDP_MAX_NEIGHBORS` | Max neighbors exported per refresh | `512` |
-
-### VLAN collector
-
-| Variable | Description | Default |
-|---|---|---|
-| `VLAN_ENABLED` | Enable VLAN collector | `true` |
-| `VLAN_REFRESH_INTERVAL` | Cache refresh interval | `30s` |
-| `VLAN_TIMEOUT` | Timeout for one refresh cycle | `2s` |
-| `VLAN_MAX_VLANS` | Max VLANs exported per refresh | `1024` |
-| `VLAN_MAX_MEMBERS` | Max VLAN members exported per refresh | `8192` |
-
-### LAG collector
-
-| Variable | Description | Default |
-|---|---|---|
-| `LAG_ENABLED` | Enable LAG collector | `true` |
-| `LAG_REFRESH_INTERVAL` | Cache refresh interval | `30s` |
-| `LAG_TIMEOUT` | Timeout for one refresh cycle | `2s` |
-| `LAG_MAX_LAGS` | Max LAGs exported per refresh | `512` |
-| `LAG_MAX_MEMBERS` | Max LAG members exported per refresh | `4096` |
-
-### FDB collector
-
-| Variable | Description | Default |
-|---|---|---|
-| `FDB_ENABLED` | Enable FDB collector | `false` |
-| `FDB_REFRESH_INTERVAL` | Cache refresh interval | `60s` |
-| `FDB_TIMEOUT` | Timeout for one refresh cycle | `2s` |
-| `FDB_MAX_ENTRIES` | Max ASIC FDB entries processed per refresh | `50000` |
-| `FDB_MAX_PORTS` | Max per-port FDB series exported | `1024` |
-| `FDB_MAX_VLANS` | Max per-VLAN FDB series exported | `4096` |
-
-### Switch collector
-
-| Variable | Description | Default |
-|---|---|---|
-| `SWITCH_ENABLED` | Enable switch collector | `true` |
-| `SWITCH_REFRESH_INTERVAL` | Cache refresh interval | `60s` |
-| `SWITCH_TIMEOUT` | Timeout for one refresh cycle | `2s` |
-| `SWITCH_MAX_ENTRIES` | Max switch table entries exported per refresh | `16` |
-
-### Thermal collector
-
-| Variable | Description | Default |
-|---|---|---|
-| `THERMAL_ENABLED` | Enable thermal collector | `true` |
-| `THERMAL_REFRESH_INTERVAL` | Cache refresh interval | `60s` |
-| `THERMAL_TIMEOUT` | Timeout for one refresh cycle | `2s` |
-
-### Transceiver collector
-
-The collector reads hardware identity from `STATE_DB` `TRANSCEIVER_INFO` and exports one bounded `sonic_transceiver_identity_info` series per present port. Identity labels are trimmed to remove fixed-width EEPROM padding.
-
-| Variable | Description | Default |
-|---|---|---|
-| `TRANSCEIVER_ENABLED` | Enable transceiver collector | `true` |
-| `TRANSCEIVER_REFRESH_INTERVAL` | Cache refresh interval | `60s` |
-| `TRANSCEIVER_TIMEOUT` | Timeout for one refresh cycle | `2s` |
-| `TRANSCEIVER_MAX_PORTS` | Max transceiver ports exported per refresh | `1024` |
-
-### Routing collector
-
-| Variable | Description | Default |
-|---|---|---|
-| `ROUTING_ENABLED` | Enable routing collector | `false` |
-| `ROUTING_REFRESH_INTERVAL` | Cache refresh interval | `60s` |
-| `ROUTING_TIMEOUT` | Timeout for one refresh cycle | `2s` |
-| `ROUTING_MAX_NEIGHBORS` | Max neighbor entries exported per refresh | `50000` |
-| `ROUTING_MAX_ROUTES` | Max route entries exported per refresh | `200000` |
-
-### Platform health collector
-
-| Variable | Description | Default |
-|---|---|---|
-| `PLATFORM_HEALTH_ENABLED` | Enable platform health collector | `false` |
-| `PLATFORM_HEALTH_REFRESH_INTERVAL` | Cache refresh interval | `60s` |
-| `PLATFORM_HEALTH_TIMEOUT` | Timeout for one refresh cycle | `2s` |
-| `PLATFORM_HEALTH_MAX_PROCESSES` | Max process entries exported per refresh | `512` |
-| `PLATFORM_HEALTH_MAX_STORAGE_DEVICES` | Max storage devices exported per refresh | `128` |
-
-### System collector (experimental)
-
-| Variable | Description | Default |
-|---|---|---|
-| `SYSTEM_ENABLED` | Enable system collector | `false` |
-| `SYSTEM_REFRESH_INTERVAL` | Cache refresh interval | `60s` |
-| `SYSTEM_TIMEOUT` | Timeout for one refresh cycle | `4s` |
-| `SYSTEM_COMMAND_ENABLED` | Enable allowlisted read-only command fallback | `true` |
-| `SYSTEM_COMMAND_TIMEOUT` | Timeout per command | `2s` |
-| `SYSTEM_COMMAND_MAX_OUTPUT_BYTES` | Max bytes read per command | `262144` |
-| `SYSTEM_VERSION_FILE` | SONiC version metadata path | `/etc/sonic/sonic_version.yml` |
-| `SYSTEM_MACHINE_CONF_FILE` | Machine config path | `/host/machine.conf` |
-| `SYSTEM_HOSTNAME_FILE` | Hostname path | `/etc/hostname` |
-| `SYSTEM_UPTIME_FILE` | Uptime path | `/proc/uptime` |
-
-Enable:
-
-```bash
-SYSTEM_ENABLED=true ./sonic-exporter
-```
-
-System collector exports:
-
-- `sonic_system_identity_info`
-- `sonic_system_software_info`
-- `sonic_system_uptime_seconds`
-- `sonic_system_collector_success`
-- `sonic_system_scrape_duration_seconds`
-- `sonic_system_cache_age_seconds`
-
-Data source order:
-
-1. Redis (`DEVICE_METADATA|localhost`, `CHASSIS_INFO|chassis 1`)
-2. Read-only files (`/etc/sonic/sonic_version.yml`, `/host/machine.conf`, `/etc/hostname`, `/proc/uptime`)
-3. Optional allowlisted command fallback (`show platform summary --json`, `show version`, `show platform syseeprom`)
-
-### Docker collector (experimental)
-
-| Variable | Description | Default |
-|---|---|---|
-| `DOCKER_ENABLED` | Enable docker collector | `false` |
-| `DOCKER_REFRESH_INTERVAL` | Cache refresh interval | `60s` |
-| `DOCKER_TIMEOUT` | Timeout for one refresh cycle | `2s` |
-| `DOCKER_MAX_CONTAINERS` | Max container entries exported per refresh | `128` |
-| `DOCKER_SOURCE_STALE_THRESHOLD` | Source age threshold for stale signal | `5m` |
-
-Enable:
-
-```bash
-DOCKER_ENABLED=true ./sonic-exporter
-```
-
-Docker collector behavior:
-
-- Reads `STATE_DB` keys `DOCKER_STATS|*` and `DOCKER_STATS|LastUpdateTime`.
-- No Docker socket access.
-- No writes.
-- Controlled label cardinality (`container` only).
-
-### FRR collector
-
-| Variable | Description | Default |
-|---|---|---|
-| `FRR_ENABLED` | Enable FRR collector wrapper | `false` |
-| `FRR_SOCKET_DIR_PATH` | FRR Unix socket directory | `/var/run/frr` |
-| `FRR_SOCKET_TIMEOUT` | Timeout for FRR socket access | `20s` |
-| `FRR_VTYSH_ENABLED` | Use `vtysh` instead of Unix sockets | `false` |
-| `FRR_VTYSH_PATH` | Path to `vtysh` | `/usr/bin/vtysh` |
-| `FRR_VTYSH_TIMEOUT` | Timeout for `vtysh` commands | `20s` |
-| `FRR_VTYSH_SUDO` | Run `vtysh` through `sudo` | `false` |
-| `FRR_VTYSH_OPTIONS` | Extra options passed to `vtysh` | empty |
-| `FRR_BGP_ENABLED` | Enable upstream `bgp` collector | `true` |
-| `FRR_BGP6_ENABLED` | Enable upstream `bgp6` collector | `false` |
-| `FRR_BGPL2VPN_ENABLED` | Enable upstream `bgpl2vpn` collector | `false` |
-| `FRR_OSPF_ENABLED` | Enable upstream `ospf` collector | `true` |
-| `FRR_OSPF_INSTANCES` | Comma-separated OSPF instance IDs | empty |
-| `FRR_BFD_ENABLED` | Enable upstream `bfd` collector | `true` |
-| `FRR_ROUTE_ENABLED` | Enable upstream `route` collector | `true` |
-| `FRR_ROUTE_DETAILED_ENABLED` | Enable detailed route metrics | `false` |
-| `FRR_RPKI_ENABLED` | Enable upstream `rpki` collector | `false` |
-| `FRR_VRRP_ENABLED` | Enable upstream `vrrp` collector | `false` |
-| `FRR_PIM_ENABLED` | Enable upstream `pim` collector | `false` |
-| `FRR_STATUS_ENABLED` | Enable upstream `status` collector | `true` |
-| `FRR_BGP_PEER_TYPES_ENABLED` | Enable peer-type aggregate metric | `false` |
-| `FRR_BGP_PEER_TYPES_KEYS` | Comma-separated BGP peer-type keys | `type` |
-| `FRR_BGP_PEER_DESCRIPTIONS_ENABLED` | Add structured peer descriptions as labels | `false` |
-| `FRR_BGP_PEER_DESCRIPTIONS_PLAIN_TEXT` | Use plain-text peer descriptions | `false` |
-| `FRR_BGP_PEER_GROUPS_ENABLED` | Add peer group labels | `false` |
-| `FRR_BGP_PEER_HOSTNAMES_ENABLED` | Add peer hostname labels | `false` |
-| `FRR_BGP_ADVERTISED_PREFIXES_ENABLED` | Query advertised prefix counts for older FRR | `false` |
-| `FRR_BGP_ACCEPTED_FILTERED_PREFIXES_ENABLED` | Export accepted and filtered BGP prefix counts | `false` |
-| `FRR_BGP_NEXT_HOP_INTERFACE_ENABLED` | Add next-hop interface label | `false` |
-| `FRR_BGP_MONITORED_PREFIXES_FILE` | Prefix file for per-peer presence monitoring | empty |
-
-Enable:
-
-```bash
-FRR_ENABLED=true ./sonic-exporter
-```
-
-FRR collector behavior:
-
-- Delegates to the upstream `github.com/tynany/frr_exporter` collectors and keeps upstream metric names under the `frr_` namespace.
-- Uses current upstream defaults when enabled: `bgp`, `ospf`, `bfd`, `route`, and `status` are on by default; `bgp6`, `bgpl2vpn`, `rpki`, `vrrp`, and `pim` stay opt-in.
-- Uses Unix sockets by default and supports `vtysh`, but upstream also recommends leaving `vtysh` disabled unless you need it.
-- `RPKI` requires FRR built with `--enable-rpki` upstream.
+See [Grafana dashboard setup](docs/grafana-dashboard.md) for import, provisioning, variables, smoke checks, and known limits.
 
 ## Metrics examples
 
-These are compact anonymized examples. Labels can vary by SONiC platform/version.
+Labels can vary by SONiC platform and release.
 
 ```text
 sonic_interface_operational_status{device="Ethernet0"} 1
@@ -765,306 +153,59 @@ sonic_queue_dropped_packets_total{device="Ethernet0",queue="3"} 73
 sonic_lldp_neighbors 64
 sonic_vlan_admin_status{vlan="Vlan1000"} 1
 sonic_lag_oper_status{lag="PortChannel1"} 1
-sonic_transceiver_identity_info{device="Ethernet0",manufacturer="Example Optics",model="EX-100G-LR4",serial="EXAMPLE0001",vendor_rev="A1",vendor_oui="00-00-00",type="QSFP28 or later"} 1
-sonic_fdb_entries 1331
-sonic_system_uptime_seconds 123456
-sonic_docker_container_cpu_percent{container="swss"} 1.5
 frr_collector_up{collector="bgp"} 1
 node_memory_MemAvailable_bytes 1.24e+10
 ```
 
 ## Validated platforms
 
-These tests were done with SONiC Community releases (not SONiC Enterprise releases).
+These combinations were tested with SONiC Community releases. Other releases may work, but they are not claimed as validated here.
 
-| Model Number | SONiC Software Version | SONiC OS Version | Distribution | Kernel | Platform | ASIC |
-|---|---|---|---|---|---|---|
-| DellEMC-S5232f-C8D48 | 202012 | 10 | Debian 10.13 | 4.19.0-12-2-amd64 | x86_64-dellemc_s5232f_c3538-r0 | broadcom |
-| SSE-T7132SR | 202505 | 12 | Debian 12.11 | 6.1.0-29-2-amd64 | x86_64-supermicro_sse_t7132s-r0 | marvell-teralynx |
-| MSN2100-CB2FC | 202411 | 12 | Debian 12.12 | 6.1.0-29-2-amd64 | x86_64-mlnx_msn2100-r0 | mellanox |
+| Model | SONiC | OS | Distribution | Kernel | Platform | ASIC |
+|---|---:|---:|---|---|---|---|
+| DellEMC-S5232f-C8D48 | 202012 | 10 | Debian 10.13 | 4.19.0-12-2-amd64 | x86_64-dellemc_s5232f_c3538-r0 | Broadcom |
+| MSN2100-CB2FC | 202411 | 12 | Debian 12.12 | 6.1.0-29-2-amd64 | x86_64-mlnx_msn2100-r0 | Mellanox |
+| SSE-T7132SR | 202505 | 12 | Debian 12.11 | 6.1.0-29-2-amd64 | x86_64-supermicro_sse_t7132s-r0 | Marvell Teralynx |
+
+## Documentation
+
+| Topic | Document |
+|---|---|
+| Design, caching, safety, and collector extension | [Architecture](docs/architecture.md) |
+| Flags and environment-variable reference | [Configuration](docs/configuration.md) |
+| Online/offline Docker deployment on SONiC | [Docker deployment for SONiC](docs/deployment-docker-sonic.md) |
+| Static binary on a regular Linux host | [Binary deployment with systemd](docs/deployment-systemd.md) |
+| Common VRF, Redis, host-filesystem, and collector problems | [Troubleshooting](docs/troubleshooting.md) |
+| Dashboard import and validation | [Grafana dashboard](docs/grafana-dashboard.md) |
+| Maintainer release process and artifact types | [Releasing](docs/releasing.md) |
 
 ## Development
 
-Requirements:
-
-- Go 1.25 or newer
+Requires Go 1.25 or newer.
 
 ```bash
 go test -race -shuffle=on -count=1 ./cmd/sonic-exporter
 go test -race -count=1 ./...
 go build ./...
-./scripts/build.sh
-./scripts/package.sh
 ./scripts/validate-dashboard.sh dashboards/sonic-exporter.json
 ./scripts/smoke-image.sh --dry-run
 ./scripts/smoke-image.sh
-docker-compose up --build -d
 ```
 
-Notes:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full local and CI-equivalent checks, collector design expectations, and pull-request guidance.
 
-- `./scripts/build.sh` produces a static Linux binary (`CGO_ENABLED=0`).
-- If you add keys to Redis fixtures manually, persist them with `SAVE` in Redis.
+## Releases and security
 
-## Release artifacts and tags
+Versioned tags publish a static Linux/amd64 archive, checksums, SBOMs, build attestations, and a GHCR image. Use immutable `vX.Y.Z` tags for deployments; GitHub Releases are the canonical release history. See [Releasing](docs/releasing.md) for artifact and verification details.
 
-Releases are created from annotated Git tags. Create a tag in `vX.Y.Z` form, then push the tag to GitHub:
+Follow [SECURITY.md](SECURITY.md) when reporting a vulnerability. Reports containing secrets or actionable exploitation steps must use a private channel.
 
-```bash
-git tag -a vX.Y.Z -m "vX.Y.Z"
-git push origin vX.Y.Z
-```
+## Project status
 
-The release workflow runs on pushed tags, not on pull requests. When the tag is pushed, GitHub Actions runs GoReleaser and publishes these release artifacts:
+This project uses human engineering and human-reviewed AI-assisted workflows. Automated tests reduce risk but do not replace validation on representative SONiC hardware. Test new releases and optional collectors in a canary environment before wider production rollout.
 
-- Linux amd64 release tarball, for example `sonic-exporter_X.Y.Z_linux_amd64.tar.gz`
-- `checksums.txt`
-- SBOM JSON files for the archive artifacts
-- GHCR image `ghcr.io/premday/sonic-exporter:vX.Y.Z`
+## License and acknowledgments
 
-This repo does not publish `.deb` packages.
+Licensed under the [MIT License](LICENSE).
 
-The Linux release tarball and the GHCR image are different artifacts. `sonic-exporter_X.Y.Z_linux_amd64.tar.gz` contains the release binary for manual installs on Linux hosts. It is not the same thing as the container image `ghcr.io/premday/sonic-exporter:vX.Y.Z`, and it is also not the same thing as a Docker image tarball created with `docker save` for the offline SONiC Docker handoff.
-
-Use the published artifacts in the deployment path that fits your environment. For deployment steps, use the chooser near Quick Start.
-
-To verify downloaded release files:
-
-```bash
-sha256sum -c checksums.txt
-```
-
-If release attestations are present in GitHub for that tag, you can verify them with GitHub CLI:
-
-```bash
-gh attestation verify <artifact-file> --repo premday/sonic-exporter
-```
-
-This release flow works on a free GitHub account for a public repo, as long as you stay within normal GitHub Actions, Releases, and GHCR limits.
-
-## Binary tarball deployment with systemd
-
-This section shows an example way to run the released `sonic-exporter` binary as a Linux service using `systemd`, with collector toggles set by environment variables. This is the secondary deployment path for regular Linux hosts or advanced manual installs.
-
-Use the published release tarball for this path, for example `sonic-exporter_X.Y.Z_linux_amd64.tar.gz`. Download the tarball and `checksums.txt`, verify the download, then extract the tarball and install the `sonic-exporter` binary from it. For a SONiC switch, prefer the Docker from GHCR path in the SONiC deployment section above.
-
-Note: this `systemd` setup is not fully tested yet. Validate it in a lab or canary environment before using it in production.
-
-### 1) Create a dedicated service user
-
-```bash
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin sonic-exporter
-```
-
-If your distro uses `/sbin/nologin`, use that path instead.
-
-### 2) Verify and extract the binary tarball
-
-First download the release tarball and `checksums.txt` to the Linux host, verify them, then extract the tarball:
-
-```bash
-VERSION=X.Y.Z
-
-sha256sum -c checksums.txt
-tar -xzf sonic-exporter_${VERSION}_linux_amd64.tar.gz
-```
-
-That tarball contains the release binary. It is not a Docker image and it cannot be imported as a container artifact.
-
-```bash
-sudo install -m 0755 ./sonic-exporter /usr/local/bin/sonic-exporter
-```
-
-### 3) Create an environment file
-
-Use an env file so collector toggles and Redis settings are easy to manage without editing the unit file.
-
-```bash
-sudo install -d -m 0755 /etc/sonic-exporter
-sudo tee /etc/sonic-exporter/sonic-exporter.env >/dev/null <<'EOF'
-REDIS_ADDRESS=localhost:6379
-REDIS_PASSWORD=
-REDIS_NETWORK=tcp
-SONIC_DISABLED_METRICS=
-
-LLDP_ENABLED=true
-VLAN_ENABLED=true
-LAG_ENABLED=true
-SWITCH_ENABLED=true
-THERMAL_ENABLED=true
-TRANSCEIVER_ENABLED=true
-FDB_ENABLED=false
-ROUTING_ENABLED=false
-PLATFORM_HEALTH_ENABLED=false
-SYSTEM_ENABLED=false
-DOCKER_ENABLED=false
-FRR_ENABLED=false
-EOF
-```
-
-### 4) Create the systemd unit
-
-Create `/etc/systemd/system/sonic-exporter.service`:
-
-```ini
-[Unit]
-Description=SONiC Prometheus Exporter
-Documentation=https://github.com/premday/sonic-exporter
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=simple
-User=sonic-exporter
-Group=sonic-exporter
-
-EnvironmentFile=/etc/sonic-exporter/sonic-exporter.env
-ExecStart=/usr/local/bin/sonic-exporter --web.vrf=
-Restart=on-failure
-RestartSec=5s
-
-# Logging
-StandardOutput=journal
-StandardError=journal
-
-# Hardening (safe defaults for this exporter)
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-LockPersonality=true
-MemoryDenyWriteExecute=true
-RestrictSUIDSGID=true
-RestrictRealtime=true
-SystemCallArchitectures=native
-
-# Allow read access to host and SONiC files used by collectors
-ReadOnlyPaths=/etc/sonic /host /proc
-
-[Install]
-WantedBy=multi-user.target
-```
-
-This regular Linux example disables VRF binding and keeps the localhost readiness check below. To run the binary directly on a SONiC host with the default `mgmt` VRF, remove `--web.vrf=` and add only the required capability:
-
-```ini
-[Service]
-ExecStart=
-ExecStart=/usr/local/bin/sonic-exporter
-AmbientCapabilities=CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_RAW
-```
-
-Treat this direct-binary SONiC setup as an advanced canary path. The Docker deployment above remains the recommended SONiC installation.
-
-### 5) Enable and start
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now sonic-exporter
-sudo systemctl status sonic-exporter
-```
-
-### 6) Validate service and metrics
-
-```bash
-sudo systemctl show sonic-exporter --property=Environment
-curl -s http://127.0.0.1:9101/metrics | head
-```
-
-To confirm a specific collector is enabled/disabled, look for its metric prefix:
-- LLDP: `sonic_lldp_`
-- VLAN: `sonic_vlan_`
-- LAG: `sonic_lag_`
-- FDB: `sonic_fdb_`
-- System: `sonic_system_`
-- Docker: `sonic_docker_`
-- FRR: `frr_`
-
-### 7) Change collector settings safely
-
-Edit env file only, then restart:
-
-```bash
-sudoedit /etc/sonic-exporter/sonic-exporter.env
-sudo systemctl restart sonic-exporter
-```
-
-### 8) Prefer overrides for local customization
-
-If the unit is package-managed in future, do not edit it directly. Use an override:
-
-```bash
-sudo systemctl edit sonic-exporter
-```
-
-Example override:
-
-```ini
-[Service]
-Environment="FDB_ENABLED=true"
-Environment="SYSTEM_ENABLED=true"
-```
-
-Then:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart sonic-exporter
-```
-
-### Testing safely without breaking production
-
-Validate unit syntax first (no restart):
-
-```bash
-sudo systemd-analyze verify /etc/systemd/system/sonic-exporter.service
-```
-
-Run a **canary** service on a different port:
-
-1. Copy unit to `sonic-exporter-canary.service`
-2. Change `ExecStart=/usr/local/bin/sonic-exporter --web.vrf= --web.listen-address=:19101`
-3. Optionally use a canary env file
-4. Start only canary:
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl start sonic-exporter-canary
-   sudo systemctl status sonic-exporter-canary
-   ```
-- Verify:
-   - `curl -sf http://127.0.0.1:19101/metrics >/dev/null && echo OK`
-   - `journalctl -u sonic-exporter-canary -n 100 --no-pager`
-- Clean rollback:
-   ```bash
-   sudo systemctl stop sonic-exporter-canary
-   sudo systemctl disable sonic-exporter-canary
-   rm /etc/systemd/system/sonic-exporter-canary.service
-   ```
-
-For a SONiC management-VRF canary, keep the default VRF instead, use `--web.listen-address=:19101`, retain `CAP_NET_RAW`, and verify `http://<switch-mgmt-ip>:19101/metrics` from the management network.
-
-### Notes
-
-- SONiC collector toggles are controlled by environment variables, not dedicated CLI flags.
-- Keep `SYSTEM_ENABLED` and `DOCKER_ENABLED` off unless you need them.
-- If hardening blocks file access on your distro, relax only the minimum setting and document the reason.
-
-## Disclaimer
-
-This project is developed through a combination of human engineering and AI-assisted workflows, with all work performed under human supervision and subject to human review. Changes are expected to be validated, tested, and approved by qualified engineers before production deployment.
-
-## Upstream credits and acknowledgments
-
-This project builds on work from upstream open source projects. Thank you to the maintainers and contributors.
-
-- SONiC project: https://github.com/sonic-net/SONiC
-- Original sonic-exporter fork lineage referenced by module path `github.com/vinted/sonic-exporter`
-- Prometheus ecosystem components used by this project:
-  - `node_exporter`: https://github.com/prometheus/node_exporter
-  - `client_golang`: https://github.com/prometheus/client_golang
-
-If this repository was forked from another `sonic-exporter` repository in your organization history, add that URL here as well so lineage stays explicit for users.
+This project builds on the SONiC and Prometheus ecosystems, including [`node_exporter`](https://github.com/prometheus/node_exporter), [`client_golang`](https://github.com/prometheus/client_golang), and [`frr_exporter`](https://github.com/tynany/frr_exporter). Thank you to their maintainers and contributors, and to the maintainers of the upstream `sonic-exporter` forks named above.
