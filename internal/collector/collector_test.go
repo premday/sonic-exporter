@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -182,13 +183,21 @@ func populateRedisData() error {
 	return nil
 }
 
-func pushDataFromFile(ctx context.Context, fileName string) error {
+func pushDataFromFile(ctx context.Context, fileName string) (returnErr error) {
 	var database redisDatabase
 
-	redisClient, _ := redis.NewClient()
+	redisClient, err := redis.NewClient()
+	if err != nil {
+		return err
+	}
 
-	file, _ := os.Open(fileName)
-	defer file.Close()
+	file, err := os.Open(fileName)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, file.Close())
+	}()
 
 	byteValue, err := io.ReadAll(file)
 	if err != nil {
@@ -216,24 +225,32 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	os.Setenv("REDIS_ADDRESS", s.Addr())
-	os.Setenv("LLDP_ENABLED", "true")
-	os.Setenv("LLDP_INCLUDE_MGMT", "true")
-	os.Setenv("VLAN_ENABLED", "true")
-	os.Setenv("LAG_ENABLED", "true")
-	os.Setenv("FDB_ENABLED", "true")
-	os.Setenv("ROUTING_ENABLED", "true")
-	os.Setenv("SWITCH_ENABLED", "true")
-	os.Setenv("THERMAL_ENABLED", "true")
-	os.Setenv("TRANSCEIVER_ENABLED", "true")
-	os.Setenv("PLATFORM_HEALTH_ENABLED", "true")
-	os.Setenv("SYSTEM_ENABLED", "true")
-	os.Setenv("DOCKER_ENABLED", "true")
-	os.Setenv("SYSTEM_COMMAND_ENABLED", "false")
-	os.Setenv("SYSTEM_VERSION_FILE", "../../fixtures/test/system_sonic_version.yml")
-	os.Setenv("SYSTEM_MACHINE_CONF_FILE", "../../fixtures/test/system_machine.conf")
-	os.Setenv("SYSTEM_HOSTNAME_FILE", "../../fixtures/test/system_hostname")
-	os.Setenv("SYSTEM_UPTIME_FILE", "../../fixtures/test/system_uptime")
+	testEnvironment := map[string]string{
+		"REDIS_ADDRESS":            s.Addr(),
+		"LLDP_ENABLED":             "true",
+		"LLDP_INCLUDE_MGMT":        "true",
+		"VLAN_ENABLED":             "true",
+		"LAG_ENABLED":              "true",
+		"FDB_ENABLED":              "true",
+		"ROUTING_ENABLED":          "true",
+		"SWITCH_ENABLED":           "true",
+		"THERMAL_ENABLED":          "true",
+		"TRANSCEIVER_ENABLED":      "true",
+		"PLATFORM_HEALTH_ENABLED":  "true",
+		"SYSTEM_ENABLED":           "true",
+		"DOCKER_ENABLED":           "true",
+		"SYSTEM_COMMAND_ENABLED":   "false",
+		"SYSTEM_VERSION_FILE":      "../../fixtures/test/system_sonic_version.yml",
+		"SYSTEM_MACHINE_CONF_FILE": "../../fixtures/test/system_machine.conf",
+		"SYSTEM_HOSTNAME_FILE":     "../../fixtures/test/system_hostname",
+		"SYSTEM_UPTIME_FILE":       "../../fixtures/test/system_uptime",
+	}
+	for key, value := range testEnvironment {
+		if err := os.Setenv(key, value); err != nil {
+			slog.Error("failed to set test environment", "key", key, "error", err)
+			os.Exit(1)
+		}
+	}
 	err = populateRedisData()
 	if err != nil {
 		slog.Error("failed to populate redis data", "error", err)
@@ -243,24 +260,6 @@ func TestMain(m *testing.M) {
 	exitCode := m.Run()
 
 	s.Close()
-	os.Unsetenv("REDIS_ADDRESS")
-	os.Unsetenv("LLDP_ENABLED")
-	os.Unsetenv("LLDP_INCLUDE_MGMT")
-	os.Unsetenv("VLAN_ENABLED")
-	os.Unsetenv("LAG_ENABLED")
-	os.Unsetenv("FDB_ENABLED")
-	os.Unsetenv("ROUTING_ENABLED")
-	os.Unsetenv("SWITCH_ENABLED")
-	os.Unsetenv("THERMAL_ENABLED")
-	os.Unsetenv("TRANSCEIVER_ENABLED")
-	os.Unsetenv("PLATFORM_HEALTH_ENABLED")
-	os.Unsetenv("SYSTEM_ENABLED")
-	os.Unsetenv("DOCKER_ENABLED")
-	os.Unsetenv("SYSTEM_COMMAND_ENABLED")
-	os.Unsetenv("SYSTEM_VERSION_FILE")
-	os.Unsetenv("SYSTEM_MACHINE_CONF_FILE")
-	os.Unsetenv("SYSTEM_HOSTNAME_FILE")
-	os.Unsetenv("SYSTEM_UPTIME_FILE")
 	os.Exit(exitCode)
 }
 
@@ -395,10 +394,28 @@ func TestHwCollectorMetricFilter(t *testing.T) {
 }
 
 func TestHwCollectorPsuNumericMetricParsing(t *testing.T) {
+	server := miniredis.RunT(t)
+	t.Setenv("REDIS_ADDRESS", server.Addr())
 	ctx := context.Background()
 	redisClient, err := redis.NewClient()
 	if err != nil {
 		t.Fatalf("failed to create redis client: %v", err)
+	}
+	for key, data := range map[string]map[string]string{
+		"PSU_INFO|PSU 1": {
+			"presence": "true",
+			"status":   "true",
+			"voltage":  "12.4",
+		},
+		"PSU_INFO|PSU 2": {
+			"presence": "true",
+			"status":   "true",
+			"voltage":  "12.3",
+		},
+	} {
+		if err := redisClient.HsetToDb(ctx, "STATE_DB", key, data); err != nil {
+			t.Fatalf("failed to write valid PSU sample data: %v", err)
+		}
 	}
 
 	err = redisClient.HsetToDb(ctx, "STATE_DB", "PSU_INFO|PSU 3", map[string]string{

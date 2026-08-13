@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -556,14 +557,16 @@ func parseStringEnv(key, defaultValue string) string {
 	return strings.TrimSpace(value)
 }
 
-func parseSimpleKeyValueFile(filePath string) (map[string]string, error) {
+func parseSimpleKeyValueFile(filePath string) (result map[string]string, returnErr error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		returnErr = errors.Join(returnErr, file.Close())
+	}()
 
-	result := map[string]string{}
+	result = map[string]string{}
 	scanner := bufio.NewScanner(file)
 
 	for scanner.Scan() {
@@ -711,12 +714,14 @@ func parseSysEEPROMOutput(output string) map[string]string {
 	return values
 }
 
-func readSingleLineFile(filePath string) (string, error) {
+func readSingleLineFile(filePath string) (result string, returnErr error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() {
+		returnErr = errors.Join(returnErr, file.Close())
+	}()
 
 	content, err := io.ReadAll(file)
 	if err != nil {

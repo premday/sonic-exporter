@@ -83,7 +83,7 @@ For a deeper breakdown, see `docs/architecture.md`.
 | LAG | PortChannel and member state | Enabled |
 | Switch | Switch-level Redis state from `APPL_DB` `SWITCH_TABLE` | Enabled |
 | Thermal | ASIC and SFP max temperatures from `STATE_DB` | Enabled |
-| Transceiver | Transceiver status, flags, and thresholds from `STATE_DB` | Enabled |
+| Transceiver | Transceiver identity, status, flags, and thresholds from `STATE_DB` | Enabled |
 | Routing | Route and neighbor summaries from `APPL_DB` | Disabled (`ROUTING_ENABLED=false`) |
 | Platform Health | Process, storage, and system health metrics from `STATE_DB` | Disabled (`PLATFORM_HEALTH_ENABLED=false`) |
 | FDB | FDB summary from ASIC DB | Disabled (`FDB_ENABLED=false`) |
@@ -617,6 +617,8 @@ Be careful with broad patterns. A wide match can also hide health metrics such a
 
 ### Transceiver collector
 
+The collector reads hardware identity from `STATE_DB` `TRANSCEIVER_INFO` and exports one bounded `sonic_transceiver_identity_info` series per present port. Identity labels are trimmed to remove fixed-width EEPROM padding.
+
 | Variable | Description | Default |
 |---|---|---|
 | `TRANSCEIVER_ENABLED` | Enable transceiver collector | `true` |
@@ -763,6 +765,7 @@ sonic_queue_dropped_packets_total{device="Ethernet0",queue="3"} 73
 sonic_lldp_neighbors 64
 sonic_vlan_admin_status{vlan="Vlan1000"} 1
 sonic_lag_oper_status{lag="PortChannel1"} 1
+sonic_transceiver_identity_info{device="Ethernet0",manufacturer="Example Optics",model="EX-100G-LR4",serial="EXAMPLE0001",vendor_rev="A1",vendor_oui="00-00-00",type="QSFP28 or later"} 1
 sonic_fdb_entries 1331
 sonic_system_uptime_seconds 123456
 sonic_docker_container_cpu_percent{container="swss"} 1.5

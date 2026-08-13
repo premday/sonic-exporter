@@ -22,6 +22,7 @@ type transceiverCollectorConfig struct {
 
 type transceiverCollector struct {
 	moduleInfo             *prometheus.Desc
+	identityInfo           *prometheus.Desc
 	statusValue            *prometheus.Desc
 	statusFlagValue        *prometheus.Desc
 	statusFlagChanges      *prometheus.Desc
@@ -60,6 +61,8 @@ func NewTransceiverCollector(logger *slog.Logger, metricFilter MetricFilter) *tr
 	collector := &transceiverCollector{
 		moduleInfo: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "module_info"),
 			"Transceiver module state metadata, value is always 1", []string{"device", "module_state", "module_fault_cause"}, nil),
+		identityInfo: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "identity_info"),
+			"Transceiver hardware identity metadata, value is always 1", []string{"device", "manufacturer", "model", "serial", "vendor_rev", "vendor_oui", "type"}, nil),
 		statusValue: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "status_value"),
 			"Transceiver status values from STATE_DB TRANSCEIVER_STATUS", []string{"device", "field"}, nil),
 		statusFlagValue: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "status_flag_value"),
@@ -116,6 +119,7 @@ func (collector *transceiverCollector) IsEnabled() bool { return collector.confi
 
 func (collector *transceiverCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- collector.moduleInfo
+	ch <- collector.identityInfo
 	ch <- collector.statusValue
 	ch <- collector.statusFlagValue
 	ch <- collector.statusFlagChanges
@@ -218,6 +222,16 @@ func (collector *transceiverCollector) scrapeMetrics(ctx context.Context) ([]pro
 	metrics := []prometheus.Metric{}
 	skippedEntries := 0
 	truncated := 0.0
+
+	identityMetrics, identitySkipped, identityTruncated, err := collector.scrapeIdentityMetrics(ctx, redisClient)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	metrics = append(metrics, identityMetrics...)
+	skippedEntries += identitySkipped
+	if identityTruncated {
+		truncated = 1
+	}
 
 	for index, statusKey := range statusKeys {
 		if index >= collector.config.maxPorts {
