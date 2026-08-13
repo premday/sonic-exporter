@@ -1,0 +1,9 @@
+cyan: #00BCD4
+green: #2EC6A3
+orange: #FF8A1E
+navy: #071622
+navy2: #0D1D29
+slate: #687786
+gray: #AEB8C2
+light: #E8EDF2
+white: #FFFFFF
