@@ -5,6 +5,14 @@
 [![License](https://img.shields.io/github/license/premday/sonic-exporter)](LICENSE)
 [![Container](https://img.shields.io/badge/container-GHCR-2496ED?logo=docker&logoColor=white)](https://github.com/premday/sonic-exporter/pkgs/container/sonic-exporter)
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/sonic-exporter-banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/brand/sonic-exporter-banner-light.svg">
+    <img src="docs/assets/brand/sonic-exporter-banner-light.svg" alt="sonic-exporter - switch telemetry, ready to scrape" width="100%">
+  </picture>
+</p>
+
 Prometheus telemetry for **SONiC network switches**: SONiC Redis collectors, a curated set of Linux host metrics, and optional FRRouting metrics through one scrape endpoint.
 
 > **Project lineage:** this repository is an independently maintained fork of [`kpetremann/sonic-exporter`](https://github.com/kpetremann/sonic-exporter). The Go module path continues to use the original [`vinted/sonic-exporter`](https://github.com/vinted/sonic-exporter) lineage.
@@ -178,6 +186,7 @@ These combinations were tested with SONiC Community releases. Other releases may
 | Common VRF, Redis, host-filesystem, and collector problems | [Troubleshooting](docs/troubleshooting.md) |
 | Dashboard import and validation | [Grafana dashboard](docs/grafana-dashboard.md) |
 | Maintainer release process and artifact types | [Releasing](docs/releasing.md) |
+| Logo selection, palette, and usage rules | [Brand assets](docs/brand-assets.md) |
 
 ## Development
 
