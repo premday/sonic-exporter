@@ -87,4 +87,5 @@ The script checks that the JSON parses, the title and required variables are pre
 - Panel queries filter on the selected `job` and `instance` values.
 - Top lists intentionally limit the number of displayed interfaces, queues, disks, containers, VLANs, and FDB groups.
 - Platform-dependent or disabled collectors can leave panels empty.
+- This dashboard does not include routing or FRR panels. For BGP metrics from `frr_exporter`, see the [FRR Exporter - BGP dashboard](https://grafana.com/grafana/dashboards/22943-frr-exporter-bgp/).
 - Keep the dashboard portable. Do not add hard-coded hostnames, site names, private IP addresses, or fixed data source identifiers.
