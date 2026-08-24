@@ -192,7 +192,7 @@ func (collector *hwCollector) collectPsuInfo(ctx context.Context, redisClient re
 	for _, psuKey := range psuKeys {
 		available_status := 0.0
 		operational_status := 0.0
-		psuId := strings.TrimSpace(strings.TrimPrefix(psuKey, "PSU_INFO|PSU"))
+		psuId := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(strings.TrimPrefix(psuKey, "PSU_INFO|PSU")), "_-"))
 		if psuId == "" {
 			return fmt.Errorf("invalid PSU key %q: missing slot", psuKey)
 		}

@@ -263,3 +263,29 @@ sudo systemd-analyze verify /etc/systemd/system/sonic-exporter.service
 ```
 
 When testing a fix, use a unique canary name and alternate port rather than stopping the production exporter.
+
+## Process metrics are missing or PSU slot labels are unexpected
+
+Check the collector health and affected metrics first:
+
+```bash
+SWITCH_MGMT_ADDRESS=192.0.2.10
+curl -fsS "http://${SWITCH_MGMT_ADDRESS}:9101/metrics" \
+  | grep -E '^sonic_(platform_(collector_success|process_(cpu|memory)_percent)|hw_(collector_success|psu_info))'
+```
+
+Inspect `STATE_DB` (database `6`) with read-only commands:
+
+```bash
+read -rsp 'Redis password: ' REDISCLI_AUTH && export REDISCLI_AUTH
+printf '\n'
+redis-cli -n 6 --scan --pattern 'PROCESS_STATS|*'
+redis-cli -n 6 HGETALL 'PROCESS_STATS|<pid>'
+redis-cli -n 6 --scan --pattern 'PSU_INFO|PSU*'
+redis-cli -n 6 HGETALL 'PSU_INFO|PSU<slot>'
+unset REDISCLI_AUTH
+```
+
+For a process entry, the exporter uses numeric `%CPU` and `%MEM` first, then numeric `CPU` and `MEM`. The CPU or memory metric is omitted when neither candidate parses as numeric.
+
+Accepted PSU key forms such as `PSU1`, `PSU 1`, `PSU_1`, and `PSU-1` normalize to `slot="1"` in `sonic_hw_psu_info`. A PSU key with an empty slot is rejected and does not emit a metric with an empty slot.

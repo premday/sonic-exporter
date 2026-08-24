@@ -121,6 +121,10 @@ Be careful with broad patterns. A wide match can also hide health metrics such a
 | `SWITCH_TIMEOUT` | Timeout for one refresh cycle | `2s` |
 | `SWITCH_MAX_ENTRIES` | Max switch table entries exported per refresh | `16` |
 
+## Hardware collector
+
+Hardware PSU metrics read `STATE_DB` keys matching `PSU_INFO|PSU*`. `PSU1`, `PSU 1`, `PSU_1`, and `PSU-1` all export the Prometheus label `slot="1"`. Malformed keys with an empty slot are rejected; no metric is emitted with an empty `slot` label.
+
 ## Thermal collector
 
 | Variable | Description | Default |
@@ -159,6 +163,8 @@ The collector reads hardware identity from `STATE_DB` `TRANSCEIVER_INFO` and exp
 | `PLATFORM_HEALTH_TIMEOUT` | Timeout for one refresh cycle | `2s` |
 | `PLATFORM_HEALTH_MAX_PROCESSES` | Max process entries exported per refresh | `512` |
 | `PLATFORM_HEALTH_MAX_STORAGE_DEVICES` | Max storage devices exported per refresh | `128` |
+
+Process metrics read `STATE_DB` `PROCESS_STATS|<pid>` entries. The collector prefers numeric `%CPU` and `%MEM` values, then falls back to numeric `CPU` and `MEM` values when the preferred fields are absent, empty, or nonnumeric. It omits `sonic_platform_process_cpu_percent` or `sonic_platform_process_memory_percent` when neither candidate for that metric parses.
 
 ## System collector (experimental)
 

@@ -167,7 +167,7 @@ Labels can vary by SONiC platform and release.
 
 ```text
 sonic_interface_operational_status{device="Ethernet0"} 1
-sonic_hw_psu_operational_status{psu="PSU1"} 1
+sonic_hw_psu_operational_status{slot="1"} 1
 sonic_crm_stats_used{resource="ipv4_route"} 1610
 sonic_queue_dropped_packets_total{device="Ethernet0",queue="3"} 73
 sonic_lldp_neighbors 64
@@ -180,6 +180,8 @@ node_memory_MemAvailable_bytes 1.24e+10
 ## Platform support
 
 See [Platform support and limitations](docs/platform-support-and-limitations.md) for validated SONiC combinations, the metric support matrix, and known platform limits.
+
+v0.5.0 compatibility: process stats prefer `%CPU` and `%MEM`, then fall back to numeric `CPU` and `MEM`. PSU keys `PSU1`, `PSU 1`, `PSU_1`, and `PSU-1` normalize to `slot="1"`. This was tested in the LAB.
 
 ## Documentation
 
