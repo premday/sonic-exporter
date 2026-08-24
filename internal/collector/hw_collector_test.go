@@ -31,8 +31,54 @@ func TestHwCollectorScrapeMetrics_emitsSlotForPsuKeyForms(t *testing.T) {
 			assertsSlot: true,
 		},
 		{
+			name:        "underscored live key",
+			key:         "PSU_INFO|PSU_1",
+			wantSlot:    "1",
+			assertsSlot: true,
+		},
+		{
+			name:        "hyphenated key",
+			key:         "PSU_INFO|PSU-1",
+			wantSlot:    "1",
+			assertsSlot: true,
+		},
+		{
+			name:        "unspaced slot two key",
+			key:         "PSU_INFO|PSU2",
+			wantSlot:    "2",
+			assertsSlot: true,
+		},
+		{
+			name:        "spaced slot two key",
+			key:         "PSU_INFO|PSU 2",
+			wantSlot:    "2",
+			assertsSlot: true,
+		},
+		{
+			name:        "underscored slot two key",
+			key:         "PSU_INFO|PSU_2",
+			wantSlot:    "2",
+			assertsSlot: true,
+		},
+		{
+			name:        "hyphenated slot two key",
+			key:         "PSU_INFO|PSU-2",
+			wantSlot:    "2",
+			assertsSlot: true,
+		},
+		{
 			name:       "empty suffix",
 			key:        "PSU_INFO|PSU",
+			wantsError: true,
+		},
+		{
+			name:       "underscore separator only",
+			key:        "PSU_INFO|PSU_",
+			wantsError: true,
+		},
+		{
+			name:       "hyphen separator only",
+			key:        "PSU_INFO|PSU-",
 			wantsError: true,
 		},
 	}
@@ -83,12 +129,24 @@ func TestHwCollectorScrapeMetrics_emitsSlotForPsuKeyForms(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scrapeMetrics returned an error: %v", err)
 			}
-			if testCase.assertsSlot && !metricWithLabelsExists(
-				getMetricFamily(t, collector, hwPsuInfoMetricName),
-				map[string]string{"slot": testCase.wantSlot},
-				1,
-			) {
-				t.Fatalf("PSU key %q did not emit slot %q", testCase.key, testCase.wantSlot)
+			if testCase.assertsSlot {
+				for metricName, wantValue := range map[string]float64{
+					hwPsuInfoMetricName:               1,
+					hwPsuVoltageVoltsMetricName:       12.4,
+					hwPsuCurrentAmperesMetricName:     5,
+					hwPsuPowerWattsMetricName:         60,
+					hwPsuOperationalStatusMetricName:  1,
+					hwPsuAvailableStatusMetricName:    1,
+					hwPsuTemperatureCelsiusMetricName: 35,
+				} {
+					if !metricWithLabelsExists(
+						getMetricFamily(t, collector, metricName),
+						map[string]string{"slot": testCase.wantSlot},
+						wantValue,
+					) {
+						t.Fatalf("PSU key %q did not emit metric %q with slot %q", testCase.key, metricName, testCase.wantSlot)
+					}
+				}
 			}
 		})
 	}
