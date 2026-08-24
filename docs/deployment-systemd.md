@@ -174,7 +174,7 @@ If the service is running but a collector reports failure, use the [troubleshoot
 
 The direct-binary path sees the switch root at `/`, so keep the default `--path.rootfs=/`. It retains the default `mgmt` VRF listener, which is why the unit includes `CAP_NET_RAW`. Treat it as an advanced installation; the container deployment remains the recommended SONiC Community OS installation.
 
-The `v0.4.0` direct binary was validated on three SONiC 202605 lab switches using both the default `mgmt` VRF listener and explicit non-VRF mode with `--web.vrf=`.
+The `v0.5.0` direct binary was tested in the LAB with the default `mgmt` VRF listener and explicit non-VRF mode using `--web.vrf=`.
 
 ## Update or roll back
 
