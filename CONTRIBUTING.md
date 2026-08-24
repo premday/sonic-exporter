@@ -12,7 +12,7 @@ Follow [SECURITY.md](SECURITY.md) when reporting a vulnerability. Reports contai
 
 Requirements:
 
-- Go 1.25 or newer;
+- Go 1.25.13 or newer;
 - Docker for image and Compose smoke tests;
 - a shell environment capable of running the scripts under `scripts/`.
 
