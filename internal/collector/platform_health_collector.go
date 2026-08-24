@@ -263,10 +263,18 @@ func (collector *platformHealthCollector) scrapeMetrics(ctx context.Context) ([]
 		if collector.metricFilter.Enabled("sonic_platform_process_running") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.processRunning, prometheus.GaugeValue, 1, pid, processName))
 		}
-		if value, ok := parseCounterLike(processData["CPU"]); ok && collector.metricFilter.Enabled("sonic_platform_process_cpu_percent") {
+		value, ok := parseCounterLike(processData["%CPU"])
+		if !ok {
+			value, ok = parseCounterLike(processData["CPU"])
+		}
+		if ok && collector.metricFilter.Enabled("sonic_platform_process_cpu_percent") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.processCPUPercent, prometheus.GaugeValue, value, pid, processName))
 		}
-		if value, ok := parseCounterLike(processData["MEM"]); ok && collector.metricFilter.Enabled("sonic_platform_process_memory_percent") {
+		value, ok = parseCounterLike(processData["%MEM"])
+		if !ok {
+			value, ok = parseCounterLike(processData["MEM"])
+		}
+		if ok && collector.metricFilter.Enabled("sonic_platform_process_memory_percent") {
 			metrics = append(metrics, prometheus.MustNewConstMetric(collector.processMemoryPercent, prometheus.GaugeValue, value, pid, processName))
 		}
 
