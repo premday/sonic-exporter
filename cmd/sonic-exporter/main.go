@@ -8,9 +8,11 @@ import (
 
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/prometheus/client_golang/prometheus"
+	versioncollector "github.com/prometheus/client_golang/prometheus/collectors/version"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/common/promslog/flag"
+	commonversion "github.com/prometheus/common/version"
 	webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
 	nodecollector "github.com/prometheus/node_exporter/collector"
 	"github.com/vinted/sonic-exporter/internal/collector"
@@ -34,9 +36,31 @@ func nodeCollectorArgs(rootfs string) []string {
 	return append(arguments, "--path.rootfs="+rootfs)
 }
 
+func newVersionCollector() prometheus.Collector {
+	return versioncollector.NewCollector("sonic_exporter")
+}
+
+func normalizeVersionMetadata() {
+	if commonversion.Version == "" {
+		commonversion.Version = "unknown"
+	}
+	if commonversion.Branch == "" {
+		commonversion.Branch = "unknown"
+	}
+	if commonversion.BuildUser == "" {
+		commonversion.BuildUser = "unknown"
+	}
+	if commonversion.BuildDate == "" {
+		commonversion.BuildDate = "unknown"
+	}
+}
+
 func main() {
+	normalizeVersionMetadata()
+
 	// New kingpin instance to prevent imported code from adding flags (node exporter)
 	kp := kingpin.New("sonic-exporter", "Prometheus exporter for SONiC network switches")
+	kp.Version(commonversion.Print("sonic-exporter"))
 
 	var (
 		webConfig   = webflag.AddFlags(kp, ":9101")
@@ -60,6 +84,7 @@ func main() {
 
 	logger := promslog.New(promslogConfig)
 	metricFilter := collector.NewMetricFilter(logger)
+	prometheus.MustRegister(newVersionCollector())
 
 	// SONiC collectors
 	interfaceCollector := collector.NewInterfaceCollector(logger, metricFilter)
