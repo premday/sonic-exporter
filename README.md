@@ -47,6 +47,7 @@ For a quick local development check, build and start the exporter without VRF bi
 
 ```bash
 go build -o sonic-exporter ./cmd/sonic-exporter
+./sonic-exporter --version
 ./sonic-exporter --web.vrf=
 curl -fsS http://127.0.0.1:9101/metrics | head
 ```
@@ -175,7 +176,10 @@ sonic_vlan_admin_status{vlan="Vlan1000"} 1
 sonic_lag_oper_status{lag="PortChannel1"} 1
 frr_collector_up{collector="bgp"} 1
 node_memory_MemAvailable_bytes 1.24e+10
+sonic_exporter_build_info{branch="unknown",goarch="amd64",goos="linux",goversion="go1.26.7",revision="0123456789abcdef0123456789abcdef01234567",tags="unknown",version="0.6.0"} 1
 ```
+
+`sonic_exporter_build_info` identifies the exporter binary, not SONiC system software metadata from the optional System collector.
 
 ## Platform support
 
@@ -199,7 +203,7 @@ v0.5.0 compatibility: process stats prefer `%CPU` and `%MEM`, then fall back to 
 
 ## Development
 
-Requires Go 1.25.13 or newer.
+Requires Go 1.25.13 or newer. CI tests application code on Go 1.25.13 and the latest Go 1.27 release. Go 1.27 is a compatibility target, not a required local version. Release archives and Docker images use Go 1.26.7.
 
 ```bash
 go test -race -shuffle=on -count=1 ./cmd/sonic-exporter
