@@ -26,6 +26,16 @@ jobs:
         run: go test -race -shuffle=on -count=1 ./cmd/sonic-exporter
       - name: run full Go test suite
         run: go test -race -count=1 ./...
+  go-test-required:
+    name: go-test
+    needs: go-test
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: require Go test matrix
+        env:
+          GO_TEST_RESULT: ${{ needs.go-test.result }}
+        run: test "${GO_TEST_RESULT}" = "success"
   validate-dashboard:
     runs-on: ubuntu-latest
     steps:
