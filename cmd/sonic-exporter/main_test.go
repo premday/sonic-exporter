@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -14,9 +16,38 @@ import (
 	commonversion "github.com/prometheus/common/version"
 )
 
+var cliBinaryPath string
+
+func TestMain(m *testing.M) {
+	temporaryDirectory, err := os.MkdirTemp("", "sonic-exporter-test-")
+	if err != nil {
+		log.Printf("create CLI test directory: %v", err)
+		os.Exit(1)
+	}
+	cliBinaryPath = filepath.Join(temporaryDirectory, "sonic-exporter")
+
+	output, err := exec.Command("go", "build", "-o", cliBinaryPath, ".").CombinedOutput()
+	if err != nil {
+		log.Printf("build CLI binary: %v\n%s", err, output)
+		if cleanupErr := os.RemoveAll(temporaryDirectory); cleanupErr != nil {
+			log.Printf("remove CLI test directory: %v", cleanupErr)
+		}
+		os.Exit(1)
+	}
+
+	exitCode := m.Run()
+	if err := os.RemoveAll(temporaryDirectory); err != nil {
+		log.Printf("remove CLI test directory: %v", err)
+		if exitCode == 0 {
+			exitCode = 1
+		}
+	}
+	os.Exit(exitCode)
+}
+
 func buildCLI(t *testing.T) string {
 	t.Helper()
-	return buildCLIWithLdflags(t, "")
+	return cliBinaryPath
 }
 
 func buildCLIWithLdflags(t *testing.T, linkerFlags string) string {
