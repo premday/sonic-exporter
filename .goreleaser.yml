@@ -14,7 +14,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w
+      - -s -w -X github.com/prometheus/common/version.Version={{ .Version }} -X github.com/prometheus/common/version.Revision={{ .Commit }} -X github.com/prometheus/common/version.BuildDate={{ .Date }}
 
 archives:
   - id: sonic-exporter

@@ -142,4 +142,10 @@ if [[ "${success}" != "true" ]]; then
     exit 1
 fi
 
+if [[ "${BUILD_IMAGE}" == "true" ]] && ! grep '^sonic_exporter_build_info{' "${METRICS_FILE}" | grep -Fq "version=\"${IMAGE_TAG}\""; then
+    printf 'Smoke test build info did not contain version="%s"\n' "${IMAGE_TAG}" >&2
+    print_failure_logs
+    exit 1
+fi
+
 printf 'Smoke test passed on http://127.0.0.1:%s/metrics\n' "${PORT}"
