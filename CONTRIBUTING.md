@@ -12,7 +12,7 @@ Follow [SECURITY.md](SECURITY.md) when reporting a vulnerability. Reports contai
 
 Requirements:
 
-- Go 1.25.13 or newer;
+- Go 1.26.8 or newer;
 - Docker for image and Compose smoke tests;
 - a shell environment capable of running the scripts under `scripts/`.
 
@@ -58,7 +58,7 @@ gitleaks detect --no-git --redact --source .
 Install `govulncheck` and Gitleaks when you want to reproduce those jobs locally:
 
 ```bash
-go install golang.org/x/vuln/cmd/govulncheck@latest
+go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 go install github.com/zricethezav/gitleaks/v8@latest
 ```
 
