@@ -59,6 +59,25 @@ curl -fsS http://127.0.0.1:19101/metrics | head
 
 The tunnel target must be the switch management address because the exporter is bound to that VRF, not remote `127.0.0.1`.
 
+### Stale management-VRF listener after interface initialization
+
+An exporter container can remain running while its listener is bound to an interface index that no longer exists. Check the listener and the current management-VRF index without changing switch state:
+
+```bash
+ss -lnt 'sport = :9101'
+ip -o link show mgmt
+systemctl show sonic-exporter.service -p Requires -p After
+systemctl show interfaces-config.service -p Type -p ActiveState -p Result
+```
+
+For example, `*%if4:9101` with `mgmt` at index `7` suggests a stale binding; `*%mgmt:9101` identifies the current named interface. Confirm an unresolved listener index no longer exists with `ip -o link show` before drawing that conclusion. `SO_BINDTODEVICE` binds the socket to an interface index; recreating the VRF with the same name does not move the existing listener to the new index.
+
+One possible cause is a boot-time race: the exporter and `interfaces-config.service` both start after `sonic.target`, but the exporter does not wait for interface initialization to finish. The interface script may recreate management networking after the listener binds. A stale index is evidence of a binding problem, not proof of which event recreated the VRF.
+
+For Docker deployments, use the [management-VRF startup ordering](deployment-docker-sonic.md#management-vrf-startup-ordering) dependency to wait for synchronous interface initialization. The ordering rule alone does not repair an existing stale socket. Once management networking is stable, restart only the exporter under the normal change-approval process, then check the listener binding and metrics reachability. Do not restart Docker, switch networking, or the switch as a workaround.
+
+This startup rule adds no polling or fixed delays. It does not cover VRF recreation later during operation, and a running container alone does not establish metrics reachability.
+
 ## The listener reports a permission error
 
 The SONiC management-VRF listener requires `NET_RAW`.

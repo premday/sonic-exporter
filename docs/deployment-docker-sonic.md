@@ -171,8 +171,8 @@ Create `/etc/systemd/system/sonic-exporter.service` and replace `vX.Y.Z` with th
 [Unit]
 Description=SONiC Exporter container
 Documentation=https://github.com/premday/sonic-exporter
-Requires=docker.service database.service
-After=docker.service database.service sonic.target
+Requires=docker.service database.service interfaces-config.service
+After=docker.service database.service interfaces-config.service sonic.target
 BindsTo=sonic.target
 StartLimitIntervalSec=1200
 StartLimitBurst=3
@@ -204,6 +204,31 @@ sudo systemctl status sonic-exporter.service --no-pager
 ```
 
 Docker's restart policy should remain `no` because `systemd` is the single restart owner.
+
+### Management-VRF startup ordering
+
+On SONiC releases where `interfaces-config.service` performs management-interface setup, the exporter must start after that service completes. Ordering only after `sonic.target` allows both services to start concurrently. The interface-configuration script can bring down `eth0` and synchronously restart networking, potentially recreating `mgmt` after the exporter has bound its listener.
+
+`interfaces-config.service` is a `Type=oneshot` service on the inspected SONiC 3.1.3.0 system. `After=` waits for its startup command to finish; `Requires=` also prevents exporter startup if that service fails. Explicitly stopping the required interface service also stops the exporter; this dependency is not a runtime VRF watcher. This orders the exporter after interface initialization, not after every container. It adds no polling, sleeps, or exporter code changes. Before using this dependency on another SONiC release, confirm that the service exists and completes management-VRF setup synchronously.
+
+For an existing installation, preserve the current exporter unit and create `/etc/systemd/system/sonic-exporter.service.d/ordering.conf` with:
+
+```ini
+[Unit]
+Requires=interfaces-config.service
+After=interfaces-config.service
+```
+
+Verify the merged unit and reload systemd's unit definitions:
+
+```bash
+sudo systemd-analyze verify /etc/systemd/system/sonic-exporter.service
+sudo systemctl daemon-reload
+```
+
+These commands do not restart the exporter or networking. The dependency takes effect on the next exporter start, including the next boot. Do not start or restart `interfaces-config.service` or `networking.service` just to install this rule: doing so can interrupt management access. Starting the exporter will pull in its required services if they are not already active, so confirm interface initialization has completed before a manual exporter start.
+
+This prevents the identified boot-time ordering gap; it does not detect or repair a VRF recreated later during operation. A listener already bound to a stale interface index needs an exporter-only restart after management networking is stable. See [stale management-VRF listener troubleshooting](troubleshooting.md#stale-management-vrf-listener-after-interface-initialization).
 
 ## Validate the deployment
 
