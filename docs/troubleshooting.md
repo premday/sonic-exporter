@@ -47,6 +47,12 @@ Processes running as `sonic`, and privileged operators, can control Supervisor. 
 
 `silent=true` prevents a duplicate foreground copy of Supervisor's activity log; logs still go to Docker through stderr. It does not hide warnings or errors.
 
+## Exporter is missing from SONiC monitoring
+
+Check the `sonic-exporter` entry in both live CONFIG_DB and `/etc/sonic/config_db.json`, following [FEATURE registration](deployment-docker-sonic.md#register-the-exporter-as-a-sonic-feature). A running Docker container and a working `supervisorctl` command do not create that entry. A saved JSON entry alone does not activate live monitoring.
+
+The inspected SONiC setup uses the shared Monit `container_checker`; not finding a separate `sonic-exporter` Monit file is normal. Check the shared monitor state and keep container enrollment separate from the image/deployment critical-process policy.
+
 ## Container is running but the exporter is not
 
 Supervisor can remain running when the exporter is `BACKOFF`, `EXITED`, or `FATAL`. Check `supervisorctl status`, bounded container logs, and the metrics endpoint together. Fix the startup error before restarting only the exporter container through its service owner. Do not restart Docker or switch networking. The image supplies the process-status interface, but does not configure SONiC's critical-process policy.

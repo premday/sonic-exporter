@@ -77,6 +77,8 @@ The production Docker path is intentionally different from local Compose. Correc
 
 The v0.7.0 image includes Bash and runs the exporter under Supervisor for SONiC FEATURE process checks. Keep the image's default command; see the [Supervisor deployment notes](docs/deployment-docker-sonic.md#supervisor-and-sonic-feature-checks), including the expected local-socket authentication warning.
 
+To enroll the container in SONiC monitoring, also [register its FEATURE entry](docs/deployment-docker-sonic.md#register-the-exporter-as-a-sonic-feature) in live CONFIG_DB and the saved switch configuration. Installing the image alone does not register it.
+
 ## Collectors
 
 | Collector | What it exposes | Default |

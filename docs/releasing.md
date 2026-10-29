@@ -103,6 +103,8 @@ A manually maintained `CHANGELOG.md` should be added only if the project commits
 
 The release description must call out the new Bash/Supervisor runtime, continued non-root execution, and the startup-command change. Users must remove direct exporter command overrides to enable Supervisor; custom listener settings move to the container environment. Include the read-only udev mount, the expected permission-protected Unix-socket authentication warning, and the need to check the exporter process and metrics rather than only container state. Link to the [deployment guide](deployment-docker-sonic.md) and [warning explanation](troubleshooting.md#supervisor-reports-no-http-authentication).
 
+Also link to [FEATURE registration](deployment-docker-sonic.md#register-the-exporter-as-a-sonic-feature): enrollment requires matching live CONFIG_DB and saved configuration, not just the image. Distinguish expected-container monitoring from critical-process policy, which the bundled image does not currently define.
+
 The development image was checked on SONiC lab switches for process status, metrics, and read-only udev access. Recheck the actual release candidate after building through the standard Dockerfile; that earlier evidence does not validate a different image ID. Keep unpublished lab builds separate from the eventual immutable published tag.
 
 ## Rollout

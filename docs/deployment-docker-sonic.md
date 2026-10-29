@@ -8,6 +8,7 @@ This is the recommended production path for running `sonic-exporter` on a SONiC 
 
 - [Runtime requirements](#runtime-requirements)
 - [Supervisor and SONiC FEATURE checks](#supervisor-and-sonic-feature-checks)
+  - [Register the exporter as a SONiC FEATURE](#register-the-exporter-as-a-sonic-feature)
 - [Online image pull](#online-image-pull)
 - [Offline image handoff](#offline-image-handoff)
 - [Baseline environment](#baseline-environment)
@@ -51,6 +52,48 @@ sudo docker exec sonic-exporter bash -c "supervisorctl status"
 Expect `sonic-exporter RUNNING`. The image does not register a SONiC FEATURE or define the host's critical-process policy; those remain deployment responsibilities. Do not give FEATURE management and a custom unit competing ownership of the same container.
 
 Supervisor uses only a Unix socket with mode `0600` inside a `0700` directory, owned by `sonic`. Its startup authentication warning is expected: access is controlled by filesystem permissions, not a password. No TCP management endpoint is configured. See [the warning explanation](troubleshooting.md#supervisor-reports-no-http-authentication).
+
+### Register the exporter as a SONiC FEATURE
+
+Running Supervisor does not enroll a container in SONiC monitoring. FEATURE-based checks use the live CONFIG_DB `FEATURE` table to determine which containers are expected to run. Persist the registration in `/etc/sonic/config_db.json` as well so it survives a reboot.
+
+The following entry was verified in both the saved configuration and live CONFIG_DB on the lab setup:
+
+```json
+{
+  "FEATURE": {
+    "sonic-exporter": {
+      "auto_restart": "enabled",
+      "delayed": "False",
+      "has_global_scope": "True",
+      "has_per_asic_scope": "False",
+      "state": "enabled"
+    }
+  }
+}
+```
+
+Merge this entry into the existing `FEATURE` table; this snippet is **not** a complete switch configuration. Keep unrelated entries intact. The FEATURE key, Docker container name, and service name must agree: `sonic-exporter` here. This registers one enabled, global container rather than per-ASIC instances and requests enabled automatic-restart policy. Field support and scope must be checked against the target SONiC release.
+
+Apply and persist the entry through the approved SONiC configuration-management workflow. Editing `config_db.json` alone does not update live CONFIG_DB; changing only live CONFIG_DB does not ensure persistence. Registration is separate from installing the image and service unit. Do not perform a full configuration reload or restart networking/core services just to enroll this exporter.
+
+Verify both configurations and the shared monitor with these read-only checks:
+
+```bash
+sudo python3 - <<'PY'
+import json
+with open("/etc/sonic/config_db.json") as source:
+    feature = json.load(source).get("FEATURE", {}).get("sonic-exporter")
+print(json.dumps(feature, indent=2))
+PY
+sudo sonic-db-cli CONFIG_DB HGETALL 'FEATURE|sonic-exporter'
+sudo monit status container_checker
+sudo docker exec sonic-exporter bash -c "supervisorctl status"
+```
+
+On the inspected setup, Monit uses the generic `container_checker`, which reads the FEATURE table; no exporter-specific Monit file is needed. Confirm that the saved/live entries match, the shared check is `Monitored` and `OK`, and the exporter is `RUNNING` under Supervisor.
+
+**Container monitoring is not the same as critical-process monitoring.** SONiC system-health checks can also read `/etc/supervisor/critical_processes` inside a container. The bundled image currently does not supply that declaration. If native critical-process monitoring of the exporter is required, define and validate that policy separately; FEATURE enrollment alone does not prove the exporter child process is covered. Continue checking Supervisor status and the metrics endpoint. See the [SONiC system-health design](https://github.com/sonic-net/SONiC/blob/master/doc/system_health_monitoring/system-health-HLD.md) for the distinction.
 
 ## Online image pull
 
