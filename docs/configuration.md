@@ -7,6 +7,7 @@
 ## Contents
 
 - [Command-line flags](#command-line-flags)
+- [Container startup](#container-startup)
 - [Core settings](#core-settings)
 - [Source-side metric filtering](#source-side-metric-filtering)
 - [Collector settings](#lldp-collector)
@@ -35,6 +36,20 @@ VRF mode uses `SO_BINDTODEVICE`. It cannot be combined with exporter-toolkit sys
 For an advanced direct-binary SONiC installation, keep the default `/`. Only containers that bind the switch root at `/hostfs` should pass `--path.rootfs=/hostfs`.
 
 The default `mgmt` value is intended for SONiC Community OS and startup fails when the selected VRF device is unavailable. In the recommended SONiC container deployment, use host networking and retain `NET_RAW`; see the [Docker deployment guide](deployment-docker-sonic.md).
+
+## Container startup
+
+The v0.7.0 image starts Supervisor, which runs the exporter as the non-root `sonic` user. Its bundled configuration maps these environment variables to exporter flags; the standalone binary does not read these variables itself.
+
+| Variable | Exporter flag | Image default |
+|---|---|---|
+| `SONIC_EXPORTER_WEB_VRF` | `--web.vrf` | `mgmt` |
+| `SONIC_EXPORTER_LISTEN_ADDRESS` | `--web.listen-address` | `:9101` |
+| `SONIC_EXPORTER_ROOTFS` | `--path.rootfs` | `/hostfs` |
+
+For local development without host mounts, set `SONIC_EXPORTER_WEB_VRF=` and `SONIC_EXPORTER_ROOTFS=/`. A switch canary can change only `SONIC_EXPORTER_LISTEN_ADDRESS`, retaining its VRF and host-root settings. Recreate the container when changing its environment.
+
+Do not append the exporter binary or its flags after the image name in a normal deployment: that replaces Supervisor. For other CLI options, provide a trusted, read-only `/etc/supervisord.conf` based on the bundled file and adjust its `[program:sonic-exporter]` command. Retain the socket protections and non-root user. The [deployment guide](deployment-docker-sonic.md#supervisor-and-sonic-feature-checks) describes the process-monitoring contract.
 
 ## Core settings
 

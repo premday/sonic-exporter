@@ -12,6 +12,8 @@ sudo journalctl -u sonic-exporter.service -n 100 --no-pager
 sudo docker ps --filter name='^/sonic-exporter$'
 sudo docker inspect sonic-exporter --format \
   'Image={{.Config.Image}} Network={{.HostConfig.NetworkMode}} PID={{.HostConfig.PidMode}} Restart={{.HostConfig.RestartPolicy.Name}} CapAdd={{json .HostConfig.CapAdd}} CapDrop={{json .HostConfig.CapDrop}} Binds={{json .HostConfig.Binds}}'
+sudo docker exec sonic-exporter bash -c "supervisorctl status"
+sudo docker logs --since 30m --tail 100 sonic-exporter
 ```
 
 For an advanced direct-binary SONiC Community OS service:
@@ -24,6 +26,48 @@ sudo systemctl show sonic-exporter.service \
 ```
 
 Do not print the complete service or container environment when it may contain `REDIS_PASSWORD`.
+
+## Supervisor reports no HTTP authentication
+
+The v0.7.0 image intentionally logs this message at startup:
+
+```text
+CRIT Server 'unix_http_server' running without any HTTP authentication checking
+```
+
+Despite the severity label, this message does not mean Supervisor failed or that a TCP management service is exposed. The server listens only on `/run/sonic-supervisor/supervisor.sock`. Access is controlled by a `0600` socket inside a `0700` directory, both owned by the container's `sonic` user. Verify those permissions without changing them:
+
+```bash
+sudo docker exec sonic-exporter stat -c '%a %U:%G %n' \
+  /run/sonic-supervisor /run/sonic-supervisor/supervisor.sock
+sudo docker exec sonic-exporter bash -c "supervisorctl status"
+```
+
+Processes running as `sonic`, and privileged operators, can control Supervisor. This is the intended trust boundary; no separate password is required for the bundled setup. Do not expose the socket through a host mount, relax its permissions, or enable a TCP interface just to silence the warning. A custom configuration that changes that boundary needs its own authentication review.
+
+`silent=true` prevents a duplicate foreground copy of Supervisor's activity log; logs still go to Docker through stderr. It does not hide warnings or errors.
+
+## Exporter is missing from SONiC monitoring
+
+Check the `sonic-exporter` entry in both live CONFIG_DB and `/etc/sonic/config_db.json`, following [FEATURE registration](deployment-docker-sonic.md#register-the-exporter-as-a-sonic-feature). A running Docker container and a working `supervisorctl` command do not create that entry. A saved JSON entry alone does not activate live monitoring.
+
+The inspected SONiC setup uses the shared Monit `container_checker`; not finding a separate `sonic-exporter` Monit file is normal. Check the shared monitor state and keep container enrollment separate from the image/deployment critical-process policy.
+
+## Container is running but the exporter is not
+
+Supervisor can remain running when the exporter is `BACKOFF`, `EXITED`, or `FATAL`. Check `supervisorctl status`, bounded container logs, and the metrics endpoint together. Fix the startup error before restarting only the exporter container through its service owner. Do not restart Docker or switch networking. The image supplies the process-status interface, but does not configure SONiC's critical-process policy.
+
+If `supervisorctl` cannot connect, check whether the deployment overrides the image's default command with `./sonic-exporter`; that bypasses Supervisor.
+
+## Disk collector cannot read udev data
+
+`Failed to open directory, disabling udev device properties` means `/run/udev/data` is unavailable inside the container. Basic disk counters can still succeed, but additional device properties are disabled. If `stat /run/udev/data` succeeds on the switch, add this read-only Docker mount through the deployment configuration:
+
+```text
+--mount type=bind,src=/run/udev/data,dst=/run/udev/data,readonly
+```
+
+Recreate only the exporter container under the normal approval process, then check its logs and `node_scrape_collector_success{collector="diskstats"}`. Do not install udev in the container or use privileged mode. If the host has no udev data, omit the mount and accept the metadata limitation.
 
 ## The endpoint is not reachable
 
@@ -148,12 +192,11 @@ Also check `SONIC_DISABLED_METRICS`. Matching is case-sensitive and uses full me
 
 ## Filesystem metrics describe the container instead of the switch
 
-The recommended Docker runtime must contain all three host-filesystem elements:
+The recommended Docker runtime needs host PID visibility and the read-only host-root mount:
 
 ```text
 --pid=host
 --volume /:/hostfs:ro,rslave
-./sonic-exporter --path.rootfs=/hostfs
 ```
 
 Inspect the running container:
@@ -161,13 +204,14 @@ Inspect the running container:
 ```bash
 sudo docker inspect sonic-exporter --format \
   'PID={{.HostConfig.PidMode}} Binds={{json .HostConfig.Binds}} Cmd={{json .Config.Cmd}}'
+sudo docker exec sonic-exporter printenv SONIC_EXPORTER_ROOTFS
 ```
 
 Expected:
 
 - `PID=host`
 - a bind equivalent to `/:/hostfs:ro,rslave`
-- `--path.rootfs=/hostfs` in the exporter command
+- Supervisor as the container command and `SONIC_EXPORTER_ROOTFS=/hostfs`, which the bundled configuration passes as `--path.rootfs=/hostfs`
 
 Confirm the filesystem collector itself succeeds:
 

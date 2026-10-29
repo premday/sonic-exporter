@@ -9,8 +9,9 @@ services:
     command: redis-server --save "" --appendonly no
   exporter:
     build: .
-    command: ["./sonic-exporter", "--web.vrf="]
     ports:
       - 9101:9101
     environment:
       - REDIS_ADDRESS=redis:6379
+      - SONIC_EXPORTER_WEB_VRF=
+      - SONIC_EXPORTER_ROOTFS=/

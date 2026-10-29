@@ -75,6 +75,10 @@ curl -fsS http://127.0.0.1:9101/metrics | head
 
 The production Docker path is intentionally different from local Compose. Correct switch system metrics and management-VRF serving require host networking, host PID visibility, a read-only host-root bind, and the minimal `NET_RAW` capability. Follow the deployment guide rather than adapting the development command.
 
+The v0.7.0 image includes Bash and runs the exporter under Supervisor for SONiC FEATURE process checks. Keep the image's default command; see the [Supervisor deployment notes](docs/deployment-docker-sonic.md#supervisor-and-sonic-feature-checks), including the expected local-socket authentication warning.
+
+To enroll the container in SONiC monitoring, also [register its FEATURE entry](docs/deployment-docker-sonic.md#register-the-exporter-as-a-sonic-feature) in live CONFIG_DB and the saved switch configuration. Installing the image alone does not register it.
+
 ## Collectors
 
 | Collector | What it exposes | Default |
@@ -139,7 +143,7 @@ Most SONiC collectors refresh into in-memory snapshots so a Prometheus scrape do
 | `--web.vrf` | VRF device; an empty value disables VRF binding | `mgmt` |
 | `--path.rootfs` | Host-root prefix used by the embedded filesystem collector | `/` |
 
-In the recommended SONiC Docker deployment, keep the default management VRF and pass `--path.rootfs=/hostfs` with the host root mounted read-only at `/hostfs`.
+In the recommended SONiC Docker deployment, the bundled Supervisor configuration passes `--path.rootfs=/hostfs` and retains the management VRF by default. Mount the host root read-only at `/hostfs`. Container-only settings for canaries and local development are listed in the [configuration reference](docs/configuration.md#container-startup).
 
 ### Redis and metric filtering
 
@@ -176,7 +180,7 @@ sonic_vlan_admin_status{vlan="Vlan1000"} 1
 sonic_lag_oper_status{lag="PortChannel1"} 1
 frr_collector_up{collector="bgp"} 1
 node_memory_MemAvailable_bytes 1.24e+10
-sonic_exporter_build_info{branch="unknown",goarch="amd64",goos="linux",goversion="go1.26.10",revision="0123456789abcdef0123456789abcdef01234567",tags="unknown",version="0.6.0"} 1
+sonic_exporter_build_info{branch="unknown",goarch="amd64",goos="linux",goversion="go1.26.10",revision="0123456789abcdef0123456789abcdef01234567",tags="unknown",version="0.7.0"} 1
 ```
 
 `sonic_exporter_build_info` identifies the exporter binary, not SONiC system software metadata from the optional System collector.
@@ -203,7 +207,7 @@ v0.5.0 compatibility: process stats prefer `%CPU` and `%MEM`, then fall back to 
 
 ## Development
 
-Requires Go 1.26.10. CI tests application code on Go 1.26.10 and the latest Go 1.27 release. Go 1.27 is a compatibility target, not a required local version. Release archives use Go 1.26.10. Docker images are built with Go 1.27.2.
+Requires Go 1.26.10. CI tests application code on Go 1.26.10 and the latest Go 1.27 release. Go 1.27 is a compatibility target, not a required local version. Release archives use Go 1.26.10. Docker images are built with Go 1.27.3.
 
 ```bash
 go test -race -shuffle=on -count=1 ./cmd/sonic-exporter

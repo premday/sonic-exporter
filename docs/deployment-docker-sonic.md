@@ -7,6 +7,8 @@ This is the recommended production path for running `sonic-exporter` on a SONiC 
 ## Contents
 
 - [Runtime requirements](#runtime-requirements)
+- [Supervisor and SONiC FEATURE checks](#supervisor-and-sonic-feature-checks)
+  - [Register the exporter as a SONiC FEATURE](#register-the-exporter-as-a-sonic-feature)
 - [Online image pull](#online-image-pull)
 - [Offline image handoff](#offline-image-handoff)
 - [Baseline environment](#baseline-environment)
@@ -27,12 +29,71 @@ The production container needs a small but specific host integration:
 | `--network host` | Reaches local SONiC Redis and exposes the HTTP listener through the host `mgmt` VRF |
 | `--pid=host` | Lets the filesystem collector read the host mount table from `/proc/1/mountinfo` |
 | `--volume /:/hostfs:ro,rslave` | Provides read-only host filesystem data and propagates host mount changes |
-| `--path.rootfs=/hostfs` | Makes filesystem capacity and inode calls operate on the host root |
+| `SONIC_EXPORTER_ROOTFS=/hostfs` (image default) | Supervisor passes the matching `--path.rootfs` argument to the exporter |
+| `--mount type=bind,src=/run/udev/data,dst=/run/udev/data,readonly` | Provides host disk device metadata without write access |
 | `--cap-drop ALL --cap-add NET_RAW` | Retains only the capability required for the VRF-bound listener |
 
 The image runs as the non-root `sonic` user. Do **not** add privileged mode, `CAP_SYS_ADMIN`, a writable host-root bind, or access to `/var/run/docker.sock`.
 
+The commands below assume `/run/udev/data` exists on the switch. Check it with `stat /run/udev/data` before deployment. On platforms without it, omit that mount; basic disk counters still work but extra udev properties are unavailable.
+
 Optional collectors remain opt-in. Start with `FDB`, Routing, Platform Health, System, Docker, and FRR disabled unless you have a specific need and have reviewed their data sources and cardinality.
+
+## Supervisor and SONiC FEATURE checks
+
+From v0.7.0, Bash and Supervisor are included in the standard image. The container's default command runs `supervisord`; the exporter is its child, with both running as `sonic`. Keep that default rather than appending `./sonic-exporter` after the image name. Container-specific listener and rootfs settings are documented under [Container startup](configuration.md#container-startup).
+
+SONiC can execute its existing process check without changing the command:
+
+```bash
+sudo docker exec sonic-exporter bash -c "supervisorctl status"
+```
+
+Expect `sonic-exporter RUNNING`. The image does not register a SONiC FEATURE or define the host's critical-process policy; those remain deployment responsibilities. Do not give FEATURE management and a custom unit competing ownership of the same container.
+
+Supervisor uses only a Unix socket with mode `0600` inside a `0700` directory, owned by `sonic`. Its startup authentication warning is expected: access is controlled by filesystem permissions, not a password. No TCP management endpoint is configured. See [the warning explanation](troubleshooting.md#supervisor-reports-no-http-authentication).
+
+### Register the exporter as a SONiC FEATURE
+
+Running Supervisor does not enroll a container in SONiC monitoring. FEATURE-based checks use the live CONFIG_DB `FEATURE` table to determine which containers are expected to run. Persist the registration in `/etc/sonic/config_db.json` as well so it survives a reboot.
+
+The following entry was verified in both the saved configuration and live CONFIG_DB on the lab setup:
+
+```json
+{
+  "FEATURE": {
+    "sonic-exporter": {
+      "auto_restart": "enabled",
+      "delayed": "False",
+      "has_global_scope": "True",
+      "has_per_asic_scope": "False",
+      "state": "enabled"
+    }
+  }
+}
+```
+
+Merge this entry into the existing `FEATURE` table; this snippet is **not** a complete switch configuration. Keep unrelated entries intact. The FEATURE key, Docker container name, and service name must agree: `sonic-exporter` here. This registers one enabled, global container rather than per-ASIC instances and requests enabled automatic-restart policy. Field support and scope must be checked against the target SONiC release.
+
+Apply and persist the entry through the approved SONiC configuration-management workflow. Editing `config_db.json` alone does not update live CONFIG_DB; changing only live CONFIG_DB does not ensure persistence. Registration is separate from installing the image and service unit. Do not perform a full configuration reload or restart networking/core services just to enroll this exporter.
+
+Verify both configurations and the shared monitor with these read-only checks:
+
+```bash
+sudo python3 - <<'PY'
+import json
+with open("/etc/sonic/config_db.json") as source:
+    feature = json.load(source).get("FEATURE", {}).get("sonic-exporter")
+print(json.dumps(feature, indent=2))
+PY
+sudo sonic-db-cli CONFIG_DB HGETALL 'FEATURE|sonic-exporter'
+sudo monit status container_checker
+sudo docker exec sonic-exporter bash -c "supervisorctl status"
+```
+
+On the inspected setup, Monit uses the generic `container_checker`, which reads the FEATURE table; no exporter-specific Monit file is needed. Confirm that the saved/live entries match, the shared check is `Monitored` and `OK`, and the exporter is `RUNNING` under Supervisor.
+
+**Container monitoring is not the same as critical-process monitoring.** SONiC system-health checks can also read `/etc/supervisor/critical_processes` inside a container. The bundled image currently does not supply that declaration. If native critical-process monitoring of the exporter is required, define and validate that policy separately; FEATURE enrollment alone does not prove the exporter child process is covered. Continue checking Supervisor status and the metrics endpoint. See the [SONiC system-health design](https://github.com/sonic-net/SONiC/blob/master/doc/system_health_monitoring/system-health-HLD.md) for the distinction.
 
 ## Online image pull
 
@@ -134,14 +195,13 @@ sudo docker run -d \
   --network host \
   --pid=host \
   --volume /:/hostfs:ro,rslave \
+  --mount type=bind,src=/run/udev/data,dst=/run/udev/data,readonly \
   --cap-drop ALL \
   --cap-add NET_RAW \
   --restart no \
   --env-file /etc/sonic-exporter/sonic-exporter.env \
-  ghcr.io/premday/sonic-exporter:${RELEASE_TAG} \
-  ./sonic-exporter \
-  --web.listen-address=":${CANARY_PORT}" \
-  --path.rootfs=/hostfs
+  --env SONIC_EXPORTER_LISTEN_ADDRESS=":${CANARY_PORT}" \
+  ghcr.io/premday/sonic-exporter:${RELEASE_TAG}
 ```
 
 Validate the endpoint through the switch management address, not remote loopback:
@@ -159,7 +219,7 @@ Then run the [host-filesystem validation](troubleshooting.md#filesystem-metrics-
 sudo docker rm -f "${CANARY_NAME}"
 ```
 
-The image intentionally has no embedded Docker `HEALTHCHECK`: a fixed command cannot safely infer a custom VRF or listener address. Use Prometheus or another external HTTP probe for readiness; container exit plus the `systemd` restart policy provide liveness handling.
+The image intentionally has no embedded Docker `HEALTHCHECK`: a fixed command cannot safely infer a custom VRF or listener address. Use Prometheus or another external HTTP probe for readiness and check Supervisor process state. Supervisor restarts the exporter after exits, but repeated startup failures can leave it in `FATAL` while the container remains running. Container status alone is not a health check; systemd restarts the container only when the container process exits.
 
 ## Persistent service with systemd
 
@@ -184,7 +244,7 @@ Restart=always
 RestartSec=30
 ExecStartPre=/bin/sh -c 'i=0; while [ "$$i" -lt 60 ]; do REDISCLI_AUTH="$$REDIS_PASSWORD" /usr/bin/redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | /bin/grep -q PONG && exit 0; i=$$((i + 1)); sleep 2; done; exit 1'
 ExecStartPre=-/usr/bin/docker rm -f sonic-exporter
-ExecStart=/usr/bin/docker run --name sonic-exporter --label app=sonic-exporter --label managed-by=systemd --restart no --network host --pid=host --volume /:/hostfs:ro,rslave --cap-drop ALL --cap-add NET_RAW --env-file /etc/sonic-exporter/sonic-exporter.env ghcr.io/premday/sonic-exporter:vX.Y.Z ./sonic-exporter --path.rootfs=/hostfs
+ExecStart=/usr/bin/docker run --name sonic-exporter --label app=sonic-exporter --label managed-by=systemd --restart no --network host --pid=host --volume /:/hostfs:ro,rslave --mount type=bind,src=/run/udev/data,dst=/run/udev/data,readonly --cap-drop ALL --cap-add NET_RAW --env-file /etc/sonic-exporter/sonic-exporter.env ghcr.io/premday/sonic-exporter:vX.Y.Z
 ExecStop=-/usr/bin/docker stop sonic-exporter
 ExecStopPost=-/usr/bin/docker rm -f sonic-exporter
 
@@ -203,7 +263,7 @@ sudo systemctl enable --now sonic-exporter.service
 sudo systemctl status sonic-exporter.service --no-pager
 ```
 
-Docker's restart policy should remain `no` because `systemd` is the single restart owner.
+Docker's restart policy should remain `no` because `systemd` owns container restarts. Supervisor owns exporter-process restarts inside the container.
 
 ### Management-VRF startup ordering
 
@@ -236,7 +296,10 @@ Confirm the runtime contract:
 
 ```bash
 sudo docker inspect sonic-exporter --format \
-  'Image={{.Config.Image}} Status={{.State.Status}} Network={{.HostConfig.NetworkMode}} PID={{.HostConfig.PidMode}} Restart={{.HostConfig.RestartPolicy.Name}} CapAdd={{json .HostConfig.CapAdd}} CapDrop={{json .HostConfig.CapDrop}} Binds={{json .HostConfig.Binds}}'
+  'Image={{.Config.Image}} ImageID={{.Image}} Status={{.State.Status}} User={{.Config.User}} Cmd={{json .Config.Cmd}} Network={{.HostConfig.NetworkMode}} PID={{.HostConfig.PidMode}} Restart={{.HostConfig.RestartPolicy.Name}} CapAdd={{json .HostConfig.CapAdd}} CapDrop={{json .HostConfig.CapDrop}} Binds={{json .HostConfig.Binds}}'
+sudo docker inspect sonic-exporter --format \
+  '{{range .Mounts}}{{if eq .Destination "/run/udev/data"}}UdevSource={{.Source}} Writable={{.RW}}{{end}}{{end}}'
+sudo docker exec sonic-exporter bash -c "supervisorctl status"
 ```
 
 Expected characteristics include:
@@ -246,6 +309,8 @@ Expected characteristics include:
 - `Restart=no`
 - `NET_RAW` added and all other capabilities dropped
 - `/:/hostfs:ro,rslave` in the bind list
+- `User=sonic`, a Supervisor command, and the exporter reported as `RUNNING`
+- `UdevSource=/run/udev/data Writable=false` when the udev mount is available
 
 Validate the metrics endpoint through the management address:
 
@@ -284,7 +349,9 @@ sudo docker image inspect ghcr.io/premday/sonic-exporter:${NEW_RELEASE_TAG} \
 
 For an offline switch, repeat the [offline handoff](#offline-image-handoff) with the new tag.
 
-Back up the unit, change only the image tag, and restart only the exporter:
+When upgrading from the direct-binary image to v0.7.0, remove the explicit `./sonic-exporter ...` command after the image name, retain the host-root mount, and add the read-only udev mount where available. Move custom listener settings to the [container environment](configuration.md#container-startup). Otherwise, Supervisor will be bypassed. Loading an image does not replace an existing container; automation must compare image IDs, not just tag strings, when testing rebuilt, unpublished images.
+
+Back up the unit, update the image tag and any required startup settings, then restart only the exporter:
 
 ```bash
 sudo cp /etc/systemd/system/sonic-exporter.service \
@@ -301,6 +368,8 @@ Repeat the validation checks above before deleting the old image.
 ## Rollback
 
 Confirm the previous image is still present, restore its tag in the unit, and restart only this service:
+
+If rolling back to v0.6.0 or older, restore the previous direct-binary command as well, including `--path.rootfs=/hostfs` and any custom listener flags. The container environment settings introduced in v0.7.0 do not configure older images.
 
 ```bash
 PREVIOUS_RELEASE_TAG=vX.Y.Z
