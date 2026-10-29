@@ -2,7 +2,7 @@
 
 This dashboard gives operators a detailed view of one SONiC switch. It covers switch identity, host health, interfaces, queues, hardware, optics, ASIC capacity, topology, containers, FDB state, platform health, storage, and exporter diagnostics.
 
-The checked-in file uses Grafana's `dashboard.grafana.app/v2` resource format. It contains 109 panels arranged in 15 rows.
+The checked-in file uses Grafana's `dashboard.grafana.app/v2` resource format.
 
 ## Requirements
 
@@ -40,7 +40,7 @@ The dashboard uses this row order:
 
 | Row | Default | Main content |
 |---|---|---|
-| Overview | Expanded | Switch identity, SONiC version, uptime, collector health, host health, links, hardware, optics, FDB, platform health, and storage summaries |
+| Overview | Expanded | Switch identity, SONiC and exporter versions, uptime, collector health, host health, links, hardware, optics, FDB, platform health, storage summaries, and scraped sample count |
 | Interfaces / Traffic | Expanded | Interface state, throughput, utilization, packet mix, errors, discards, pause frames, and frame sizes |
 | Queues / QoS (platform-dependent) | Collapsed | Queue throughput, packet rates, drops, and persistent watermarks |
 | Hardware / Environment (platform-dependent) | Collapsed | PSU inventory and state, fan speed and state, and ASIC temperature |
