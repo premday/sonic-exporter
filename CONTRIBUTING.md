@@ -34,6 +34,8 @@ docker compose down
 
 The Compose setup is for development only and disables VRF binding because a normal CI or developer host does not provide the SONiC `mgmt` device.
 
+Compose and the image smoke test use the default Supervisor startup, with `SONIC_EXPORTER_WEB_VRF=` and `SONIC_EXPORTER_ROOTFS=/`. The smoke test checks `bash -c "supervisorctl status"` and the HTTP endpoint; it does not validate switch data. The expected Unix-socket authentication warning is explained in [Troubleshooting](docs/troubleshooting.md#supervisor-reports-no-http-authentication).
+
 ## Run the repository checks
 
 Before submitting a pull request, run the checks relevant to your change:

@@ -48,6 +48,7 @@ dockers:
       - cmd
       - internal
       - pkg
+      - supervisord.conf
     build_flag_templates:
       - --platform=linux/amd64
       - --pull

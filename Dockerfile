@@ -1,7 +1,7 @@
 # ===========
 # Build stage
 # ===========
-FROM golang:1.27.2-alpine AS builder
+FROM golang:1.27.3-alpine AS builder
 
 WORKDIR /code
 
@@ -36,16 +36,24 @@ LABEL org.opencontainers.image.title="sonic-exporter" \
 	org.opencontainers.image.created="${CREATED}" \
 	org.opencontainers.image.source="${SOURCE}"
 
+ENV SONIC_EXPORTER_WEB_VRF=mgmt \
+	SONIC_EXPORTER_LISTEN_ADDRESS=:9101 \
+	SONIC_EXPORTER_ROOTFS=/hostfs
+
 WORKDIR /app
 COPY --from=builder /code/sonic-exporter ./sonic-exporter
-RUN apk --no-cache add libcap \
+RUN apk --no-cache add bash supervisor libcap \
 	&& setcap cap_net_raw=ep /app/sonic-exporter \
 	&& apk del libcap \
 	&& addgroup -S sonic \
-	&& adduser -S -G sonic sonic
+	&& adduser -S -G sonic sonic \
+	&& mkdir -p /run/sonic-supervisor \
+	&& chown sonic:sonic /run/sonic-supervisor \
+	&& chmod 0700 /run/sonic-supervisor
+COPY supervisord.conf /etc/supervisord.conf
 
 EXPOSE 9101
 
 USER sonic
 
-CMD [ "./sonic-exporter" ]
+CMD [ "/usr/bin/supervisord", "-c", "/etc/supervisord.conf" ]

@@ -12,13 +12,15 @@ PORT="${DEFAULT_PORT}"
 DRY_RUN="false"
 BUILD_IMAGE="true"
 CONTAINER_NAME="sonic-exporter-smoke-$$"
+CONTAINER_STARTED="false"
 METRICS_FILE=""
+SUPERVISOR_STATUS=""
 
 usage() {
     cat <<'EOF'
 Usage: scripts/smoke-image.sh [--image <image>] [--no-build] [--port <host_port>] [--dry-run]
 
-Builds or reuses a local Docker image, runs sonic-exporter, and checks /metrics.
+Builds or reuses a local Docker image, checks Supervisor, and checks /metrics.
 EOF
 }
 
@@ -39,18 +41,30 @@ die() {
 }
 
 cleanup() {
+    local status=$?
+
     if [[ -n "${METRICS_FILE}" && -f "${METRICS_FILE}" ]]; then
-        rm -f "${METRICS_FILE}"
+        if ! rm -f "${METRICS_FILE}"; then
+            printf 'Failed to remove temporary metrics file: %s\n' "${METRICS_FILE}" >&2
+            status=1
+        fi
     fi
 
-    if [[ "${DRY_RUN}" == "false" ]]; then
-        docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+    if [[ "${CONTAINER_STARTED}" == "true" ]]; then
+        if ! docker rm -f "${CONTAINER_NAME}" >/dev/null; then
+            printf 'Failed to remove smoke container: %s\n' "${CONTAINER_NAME}" >&2
+            status=1
+        fi
     fi
+
+    exit "${status}"
 }
 
 print_failure_logs() {
     printf 'Container logs from %s:\n' "${CONTAINER_NAME}" >&2
-    docker logs "${CONTAINER_NAME}" >&2 || true
+    if ! docker logs --tail 100 "${CONTAINER_NAME}" >&2; then
+        printf 'Could not read smoke container logs.\n' >&2
+    fi
 }
 
 trap cleanup EXIT
@@ -91,9 +105,10 @@ done
 [[ -n "${IMAGE_REF}" ]] || die "image must not be empty"
 
 BUILD_SCRIPT="${REPO_ROOT}/scripts/build-image.sh"
-RUN_CMD=(docker run -d --name "${CONTAINER_NAME}" -p "${PORT}:9101" "${IMAGE_REF}" "./sonic-exporter" "--web.vrf=")
-CURL_CMD=(curl -fsS "http://127.0.0.1:${PORT}/metrics")
-LOGS_CMD=(docker logs "${CONTAINER_NAME}")
+RUN_CMD=(docker run -d --name "${CONTAINER_NAME}" --cap-drop ALL --cap-add NET_RAW -p "127.0.0.1:${PORT}:9101" -e SONIC_EXPORTER_WEB_VRF= -e SONIC_EXPORTER_ROOTFS=/ "${IMAGE_REF}")
+STATUS_CMD=(docker exec "${CONTAINER_NAME}" bash -c "supervisorctl status")
+CURL_CMD=(curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${PORT}/metrics")
+LOGS_CMD=(docker logs --tail 100 "${CONTAINER_NAME}")
 RM_CMD=(docker rm -f "${CONTAINER_NAME}")
 
 if [[ "${DRY_RUN}" == "true" ]]; then
@@ -103,6 +118,7 @@ if [[ "${DRY_RUN}" == "true" ]]; then
         printf '%s\n' "# using existing image: ${IMAGE_REF}"
     fi
     print_cmd "${RUN_CMD[@]}"
+    print_cmd "${STATUS_CMD[@]}"
     print_cmd "${CURL_CMD[@]}"
     print_cmd "${LOGS_CMD[@]}"
     print_cmd "${RM_CMD[@]}"
@@ -117,18 +133,25 @@ METRICS_FILE="$(mktemp)"
 
 if ! "${RUN_CMD[@]}" >/dev/null; then
     print_failure_logs
+    printf 'Launch failed; inspect %s for any stopped container left by Docker.\n' "${CONTAINER_NAME}" >&2
     exit 1
 fi
+CONTAINER_STARTED="true"
 
 attempt=1
 max_attempts=30
 success="false"
 
 while (( attempt <= max_attempts )); do
-    if curl -fsS "http://127.0.0.1:${PORT}/metrics" >"${METRICS_FILE}"; then
+    if "${CURL_CMD[@]}" >"${METRICS_FILE}"; then
         if grep -q '^# HELP ' "${METRICS_FILE}"; then
-            success="true"
-            break
+            if SUPERVISOR_STATUS="$("${STATUS_CMD[@]}")"; then
+                if [[ "${SUPERVISOR_STATUS}" =~ ^sonic-exporter[[:space:]]+RUNNING[[:space:]] ]]; then
+                    success="true"
+                    break
+                fi
+            fi
+            printf 'Waiting for Supervisor: %s\n' "${SUPERVISOR_STATUS}" >&2
         fi
     fi
 
@@ -148,4 +171,4 @@ if [[ "${BUILD_IMAGE}" == "true" ]] && ! grep '^sonic_exporter_build_info{' "${M
     exit 1
 fi
 
-printf 'Smoke test passed on http://127.0.0.1:%s/metrics\n' "${PORT}"
+printf 'Smoke test passed: Supervisor RUNNING and http://127.0.0.1:%s/metrics available\n' "${PORT}"

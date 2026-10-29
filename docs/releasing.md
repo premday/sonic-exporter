@@ -27,6 +27,10 @@ Before publishing, `.github/workflows/release.yml` runs:
 
 The normal pull-request workflow additionally runs race-enabled tests, dashboard validation, `golangci-lint`, Gitleaks, and a Docker image smoke test. A release should not be cut to bypass a failing default-branch check.
 
+The image smoke test must launch the default Supervisor command and verify both `bash -c "supervisorctl status"` and `/metrics`; directly launching the exporter would miss the SONiC FEATURE integration. `Dockerfile` and `supervisord.conf` are the release image sources, and GoReleaser includes the configuration in its build context. No locally prebuilt base image is required.
+
+For container changes, also scan the final image's OS and Python packages with an approved image-vulnerability scanner. `govulncheck` covers Go vulnerabilities, not the Bash/Supervisor runtime dependencies. Record the scanner, image ID, findings, and any validation gaps in the PR; do not treat a successful build as security validation.
+
 ## Published artifacts
 
 GoReleaser currently publishes Linux/amd64 artifacts:
@@ -94,6 +98,12 @@ GitHub Releases are the canonical release history. Keep the release description 
 - known limitations.
 
 A manually maintained `CHANGELOG.md` should be added only if the project commits to updating it for every release or generates it automatically. Maintaining both ad hoc release notes and a manual changelog creates two sources of truth.
+
+### v0.7.0 migration notes
+
+The release description must call out the new Bash/Supervisor runtime, continued non-root execution, and the startup-command change. Users must remove direct exporter command overrides to enable Supervisor; custom listener settings move to the container environment. Include the read-only udev mount, the expected permission-protected Unix-socket authentication warning, and the need to check the exporter process and metrics rather than only container state. Link to the [deployment guide](deployment-docker-sonic.md) and [warning explanation](troubleshooting.md#supervisor-reports-no-http-authentication).
+
+The development image was checked on SONiC lab switches for process status, metrics, and read-only udev access. Recheck the actual release candidate after building through the standard Dockerfile; that earlier evidence does not validate a different image ID. Keep unpublished lab builds separate from the eventual immutable published tag.
 
 ## Rollout
 
