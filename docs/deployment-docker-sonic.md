@@ -141,6 +141,7 @@ sudo docker image inspect ghcr.io/premday/sonic-exporter:${RELEASE_TAG} \
 ```
 
 `docker load` restores the repository and tag metadata, so the run command remains `ghcr.io/premday/sonic-exporter:vX.Y.Z`.
+The tag inside the archive must match the version you deploy. Renaming the tar file does not retag the image or change the version the exporter reports.
 
 ## Baseline environment
 

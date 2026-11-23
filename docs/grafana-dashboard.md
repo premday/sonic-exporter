@@ -41,7 +41,7 @@ The dashboard uses this row order:
 | Row | Default | Main content |
 |---|---|---|
 | Overview | Expanded | Switch identity, SONiC and exporter versions, uptime, collector health, host health, links, hardware, optics, FDB, platform health, storage summaries, and scraped sample count |
-| Interfaces / Traffic | Expanded | Interface state, throughput, utilization, packet mix, errors, discards, pause frames, and frame sizes |
+| Interfaces / Traffic | Expanded | Interface state, throughput, utilization, packet mix, errors, discards, pause frames, frame sizes, and receive-side FEC rates |
 | Queues / QoS (platform-dependent) | Collapsed | Queue throughput, packet rates, drops, and persistent watermarks |
 | Hardware / Environment (platform-dependent) | Collapsed | PSU inventory and state, fan speed and state, and ASIC temperature |
 | Hardware / PSU Telemetry (platform-dependent) | Collapsed | PSU voltage, current, power, and temperature |
@@ -58,6 +58,8 @@ The dashboard uses this row order:
 
 The default time range is the last 12 hours. The dashboard uses the browser timezone and refreshes every minute.
 
+In Overview, **SONiC Exporter Version** shows the version reported by the selected exporter. **Metrics count** shows the number of samples Prometheus read in the latest scrape, not the number of distinct metric names. The count turns yellow at 10,000 and red at 20,000.
+
 ## Optional and platform-dependent data
 
 Some panels can show no data without indicating a dashboard problem:
@@ -66,10 +68,17 @@ Some panels can show no data without indicating a dashboard problem:
 - FDB collector metrics provide the FDB summary and FDB row.
 - Docker collector metrics provide the Containers / Docker row.
 - Platform health collector metrics provide platform health and storage panels.
+- Interface FEC panels require [`FEC_ENABLED=true`](configuration.md#interface-fec-counters) and support on the selected switch. Only positive rate samples are plotted, so a flat, disabled, filtered, or unsupported counter can leave the panel empty.
 - Queue, hardware, thermal, transceiver, CRM, LLDP, VLAN, and LAG data can vary by SONiC platform and release.
 - Host filesystem panels expect node exporter filesystem metrics with `mountpoint="/host"`.
 
 The Overview collector health panel expects 14 SONiC collector families. It reports `Degraded` when optional collector metrics are absent, even when the enabled collectors are healthy. Use the Exporter Diagnostics row to inspect individual collector results.
+
+### Reading the FEC charts
+
+The frame panels count FEC codewords, not Ethernet packets. **Last \*** is the most recent positive rate plotted, not necessarily the rate right now. **Max** is the highest plotted rate in the selected time range. Both are rounded for display; Prometheus retains the original values.
+
+On a 400G link, a nonzero correctable rate can be normal: FEC repairs these errors before they become packet errors. The total naturally increases, so watch for a sustained increase in the **rate** relative to that link's baseline. Compare with links using the same speed, optics or cable type, and FEC mode. There is no universal healthy frames-per-second threshold. Rising uncorrectable codewords or receive CRC errors are stronger reasons to investigate. If the platform reports pre-FEC BER, compare it with the vendor's guidance for the link.
 
 ## Validation
 
