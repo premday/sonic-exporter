@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,9 @@ const (
 	interfaceReceivePacketsMetricName          = "sonic_interface_receive_packets_total"
 	interfaceReceiveBytesMetricName            = "sonic_interface_receive_bytes_total"
 	interfaceReceiveErrsMetricName             = "sonic_interface_receive_errs_total"
+	interfaceFECCorrectableFramesMetricName    = "sonic_interface_fec_correctable_frames_total"
+	interfaceFECUncorrectableFramesMetricName  = "sonic_interface_fec_uncorrectable_frames_total"
+	interfaceFECSymbolErrorsMetricName         = "sonic_interface_fec_symbol_errors_total"
 	interfaceScrapeDurationMetricName          = "sonic_interface_scrape_duration_seconds"
 	interfaceCollectorSuccessMetricName        = "sonic_interface_collector_success"
 )
@@ -55,6 +59,10 @@ type interfaceCollector struct {
 	interfaceReceivePackets          *prometheus.Desc
 	interfaceReceivedBytes           *prometheus.Desc
 	interfaceReceiveErrs             *prometheus.Desc
+	interfaceFECCorrectableFrames    *prometheus.Desc
+	interfaceFECUncorrectableFrames  *prometheus.Desc
+	interfaceFECSymbolErrors         *prometheus.Desc
+	fecEnabled                       bool
 	scrapeDuration                   *prometheus.Desc
 	scrapeCollectorSuccess           *prometheus.Desc
 	cachedMetrics                    []prometheus.Metric
@@ -105,6 +113,13 @@ func NewInterfaceCollector(logger *slog.Logger, metricFilter MetricFilter) *inte
 			"Number of receive errs on an interface", []string{"device", "type"}, nil),
 		interfaceReceivedBytes: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "receive_bytes_total"),
 			"Number of bytes received on an interface", []string{"device"}, nil),
+		interfaceFECCorrectableFrames: prometheus.NewDesc(interfaceFECCorrectableFramesMetricName,
+			"Number of received FEC frames with correctable errors", []string{"device"}, nil),
+		interfaceFECUncorrectableFrames: prometheus.NewDesc(interfaceFECUncorrectableFramesMetricName,
+			"Number of received FEC frames with uncorrectable errors", []string{"device"}, nil),
+		interfaceFECSymbolErrors: prometheus.NewDesc(interfaceFECSymbolErrorsMetricName,
+			"Number of received FEC symbol errors", []string{"device"}, nil),
+		fecEnabled: parseBoolEnv(logger, "FEC_ENABLED", false),
 		scrapeDuration: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "scrape_duration_seconds"),
 			"Time it took for prometheus to scrape sonic interface metrics", nil, nil),
 		scrapeCollectorSuccess: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "collector_success"),
@@ -218,6 +233,11 @@ func (collector *interfaceCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- collector.interfaceReceivePackets
 	ch <- collector.interfaceReceiveErrs
 	ch <- collector.interfaceReceivedBytes
+	if collector.fecEnabled {
+		ch <- collector.interfaceFECCorrectableFrames
+		ch <- collector.interfaceFECUncorrectableFrames
+		ch <- collector.interfaceFECSymbolErrors
+	}
 	ch <- collector.scrapeDuration
 	ch <- collector.scrapeCollectorSuccess
 }
@@ -251,8 +271,40 @@ func (collector *interfaceCollector) collectInterfaceCounters(ctx context.Contex
 		return fmt.Errorf("packet size counters collection failed: %w", err)
 	}
 
+	if collector.fecEnabled {
+		collector.collectInterfaceFECCounters(interfaceName, counters)
+	}
+
 	return nil
 
+}
+
+func (collector *interfaceCollector) collectInterfaceFECCounters(interfaceName string, counters map[string]string) {
+	for _, counter := range []struct {
+		name, field string
+		desc        *prometheus.Desc
+	}{
+		{interfaceFECCorrectableFramesMetricName, "SAI_PORT_STAT_IF_IN_FEC_CORRECTABLE_FRAMES", collector.interfaceFECCorrectableFrames},
+		{interfaceFECUncorrectableFramesMetricName, "SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES", collector.interfaceFECUncorrectableFrames},
+		{interfaceFECSymbolErrorsMetricName, "SAI_PORT_STAT_IF_IN_FEC_SYMBOL_ERRORS", collector.interfaceFECSymbolErrors},
+	} {
+		if !collector.metricFilter.Enabled(counter.name) {
+			continue
+		}
+		raw, ok := counters[counter.field]
+		if !ok {
+			continue
+		}
+		value, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			collector.logger.Warn("Invalid interface FEC counter, omitting sample",
+				"device", interfaceName, "field", counter.field)
+			continue
+		}
+		collector.cachedMetrics = append(collector.cachedMetrics, prometheus.MustNewConstMetric(
+			counter.desc, prometheus.CounterValue, float64(value), interfaceName,
+		))
+	}
 }
 
 func (collector *interfaceCollector) collectInterfaceInfo(ctx context.Context, redisClient redis.Client, interfaceName string) error {

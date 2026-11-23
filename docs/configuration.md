@@ -9,6 +9,7 @@
 - [Command-line flags](#command-line-flags)
 - [Container startup](#container-startup)
 - [Core settings](#core-settings)
+- [Interface FEC counters](#interface-fec-counters)
 - [Source-side metric filtering](#source-side-metric-filtering)
 - [Collector settings](#lldp-collector)
 - [System collector](#system-collector-experimental)
@@ -58,9 +59,22 @@ Do not append the exporter binary or its flags after the image name in a normal 
 | `REDIS_ADDRESS` | Redis address (`host:port` for TCP) | `localhost:6379` |
 | `REDIS_PASSWORD` | Password for Redis | empty |
 | `REDIS_NETWORK` | Redis network type (`tcp` or `unix`) | `tcp` |
+| `FEC_ENABLED` | Export receive-side Forward Error Correction (FEC) counters when available | `false` |
 | `SONIC_DISABLED_METRICS` | Comma-separated full metric names or wildcard patterns to suppress for in-repo SONiC collectors only | empty |
 
 Protect files containing `REDIS_PASSWORD` with restrictive permissions. Avoid diagnostic commands that print the complete process environment. A safe baseline is available at [`examples/sonic-exporter.env`](../examples/sonic-exporter.env).
+
+## Interface FEC counters
+
+Set `FEC_ENABLED=true` and restart the exporter to expose these cumulative receive-side counters, labeled by `device` (for example, `Ethernet0`):
+
+| Metric | What it counts |
+|---|---|
+| `sonic_interface_fec_correctable_frames_total` | Correctable FEC frames (codewords) |
+| `sonic_interface_fec_uncorrectable_frames_total` | Uncorrectable FEC frames (codewords) |
+| `sonic_interface_fec_symbol_errors_total` | FEC symbol errors |
+
+These are not Ethernet packet errors or rates. Use Prometheus `rate()` to calculate per-second rates. Availability depends on what the SONiC platform reports for each port: missing or invalid values are omitted, while a reported zero is exported as zero. Enabling collection does not change the switch's FEC configuration. To suppress all three metrics even when enabled, set `SONIC_DISABLED_METRICS='sonic_interface_fec_*'`.
 
 ## Source-side metric filtering
 
